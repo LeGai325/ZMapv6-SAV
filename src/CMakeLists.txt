@@ -30,6 +30,19 @@ set(PROBE_MODULE_SOURCES
 	#probe_modules/module_tcp_cisco_backdoor.c
     probe_modules/module_udp.c
     probe_modules/module_ipip.c
+    probe_modules/module_tunnel_sav_common.c
+    probe_modules/module_ipip_isav.c
+    probe_modules/module_ipip_osav.c
+    probe_modules/module_gre_isav.c
+    probe_modules/module_gre_osav.c
+    probe_modules/module_ip6ip6_isav.c
+    probe_modules/module_ip6ip6_osav.c
+    probe_modules/module_gre6_isav.c
+    probe_modules/module_gre6_osav.c
+    probe_modules/module_4in6_isav.c
+    probe_modules/module_4in6_osav.c
+    probe_modules/module_6to4_isav.c
+    probe_modules/module_6to4_osav.c
     probe_modules/packet.c
     probe_modules/probe_modules.c
     probe_modules/module_ntp.c

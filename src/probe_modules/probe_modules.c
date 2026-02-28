@@ -37,6 +37,18 @@ extern probe_module_t module_ipv6_udp_dns;
 extern probe_module_t module_icmp6_echoscan;
 extern probe_module_t module_quic_initial;
 extern probe_module_t module_ipv6_quic_initial;
+extern probe_module_t module_ipip_isav;
+extern probe_module_t module_ipip_osav;
+extern probe_module_t module_gre_isav;
+extern probe_module_t module_gre_osav;
+extern probe_module_t module_ip6ip6_isav;
+extern probe_module_t module_ip6ip6_osav;
+extern probe_module_t module_gre6_isav;
+extern probe_module_t module_gre6_osav;
+extern probe_module_t module_4in6_isav;
+extern probe_module_t module_4in6_osav;
+extern probe_module_t module_6to4_isav;
+extern probe_module_t module_6to4_osav;
 
 // ADD YOUR MODULE HERE
 extern probe_module_t module_icmp6_echo_time_novalidation;
@@ -61,6 +73,18 @@ probe_module_t *probe_modules[] = {
 	&module_icmp6_echoscan,
 	&module_quic_initial,
 	&module_ipv6_quic_initial,
+	&module_ipip_isav,
+	&module_ipip_osav,
+	&module_gre_isav,
+	&module_gre_osav,
+	&module_ip6ip6_isav,
+	&module_ip6ip6_osav,
+	&module_gre6_isav,
+	&module_gre6_osav,
+	&module_4in6_isav,
+	&module_4in6_osav,
+	&module_6to4_isav,
+	&module_6to4_osav,
 	// ADD YOUR MODULE HERE
 	&module_icmp6_echo_time_novalidation
 };

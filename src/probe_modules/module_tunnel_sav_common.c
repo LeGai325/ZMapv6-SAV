@@ -219,16 +219,23 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 		}
 		if (p->inner_ipv6) {
 			struct in6_addr src6 = p->scanner_inner6;
-			if (p->proto == TUN_SAV_PROTO_6TO4 && p->mode == TUN_SAV_MODE_ISAV) {
+			if (p->mode == TUN_SAV_MODE_ISAV &&
+			    (p->proto == TUN_SAV_PROTO_6TO4)) {
+				/* 6to4 ISAV: inner source follows target tunnel node IPv6 */
 				src6 = make_6to4_v6_from_v4(outer->ip_dst);
 			} else if (p->mode == TUN_SAV_MODE_OSAV && p->have_osav_spoof6) {
 				src6 = p->osav_spoof6;
 			}
 			build_inner_ipv6(cursor, src6, p->scanner_inner6, validation);
 		} else {
-			struct in_addr src4 = p->osav_spoof4;
-			if (p->mode == TUN_SAV_MODE_ISAV && p->proto == TUN_SAV_PROTO_4IN6) {
-				src4 = p->scanner_inner4;
+			struct in_addr src4;
+			if (p->mode == TUN_SAV_MODE_ISAV &&
+			    (p->proto == TUN_SAV_PROTO_IPIP || p->proto == TUN_SAV_PROTO_GRE)) {
+				/* ISAV for IPIP/GRE: inner source equals tunnel target (outer dst) */
+				src4 = outer->ip_dst;
+			} else {
+				/* OSAV for IPv4 inner traffic uses command-provided spoof */
+				src4 = p->osav_spoof4;
 			}
 			build_inner_ipv4(cursor, src4, p->scanner_inner4, validation);
 		}
@@ -269,23 +276,21 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			cursor += GRE_HEADER_LEN;
 		}
 		if (p->inner_ipv6) {
-			struct in6_addr src6;
-			if (p->mode == TUN_SAV_MODE_OSAV &&
+			struct in6_addr src6 = p->scanner_inner6;
+			if (p->mode == TUN_SAV_MODE_ISAV &&
 			    (p->proto == TUN_SAV_PROTO_IP6IP6 ||
 			     p->proto == TUN_SAV_PROTO_GRE6)) {
+				/* ISAV for IP6IP6/GRE6: inner source equals tunnel target (outer dst) */
 				src6 = outer->ip6_dst;
 			} else if (p->mode == TUN_SAV_MODE_OSAV && p->have_osav_spoof6) {
+				/* OSAV for IPv6 inner traffic uses command-provided spoof */
 				src6 = p->osav_spoof6;
-			} else {
-				src6 = p->osav_spoof6;
-				if (!p->have_osav_spoof6) {
-					src6 = p->scanner_inner6;
-				}
 			}
 			build_inner_ipv6(cursor, src6, p->scanner_inner6, validation);
 		} else {
 			struct in_addr src4 = p->osav_spoof4;
 			if (p->mode == TUN_SAV_MODE_ISAV && p->proto == TUN_SAV_PROTO_4IN6) {
+				/* 4in6 ISAV: expected from input pair; fallback derives from IPv6 dst tail */
 				src4 = extract_v4_from_v6_tail(outer->ip6_dst);
 			}
 			build_inner_ipv4(cursor, src4, p->scanner_inner4, validation);

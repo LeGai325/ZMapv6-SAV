@@ -43,6 +43,7 @@ set(PROBE_MODULE_SOURCES
     probe_modules/module_4in6_osav.c
     probe_modules/module_6to4_isav.c
     probe_modules/module_6to4_osav.c
+    probe_modules/module_6to4_pair_collect.c
     probe_modules/packet.c
     probe_modules/probe_modules.c
     probe_modules/module_ntp.c

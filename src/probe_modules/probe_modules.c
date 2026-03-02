@@ -49,6 +49,7 @@ extern probe_module_t module_4in6_isav;
 extern probe_module_t module_4in6_osav;
 extern probe_module_t module_6to4_isav;
 extern probe_module_t module_6to4_osav;
+extern probe_module_t module_6to4_pair_collect;
 
 // ADD YOUR MODULE HERE
 extern probe_module_t module_icmp6_echo_time_novalidation;
@@ -85,6 +86,7 @@ probe_module_t *probe_modules[] = {
 	&module_4in6_osav,
 	&module_6to4_isav,
 	&module_6to4_osav,
+	&module_6to4_pair_collect,
 	// ADD YOUR MODULE HERE
 	&module_icmp6_echo_time_novalidation
 };

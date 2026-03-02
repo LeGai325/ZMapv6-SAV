@@ -55,7 +55,7 @@ static fielddef_t fields[] = {
 
 probe_module_t module_gre6_isav = {
 	.name = "gre6_isav",
-	.max_packet_length = sizeof(struct ether_header) + sizeof(struct ip6_hdr) + 4 + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) + 8,
+	.max_packet_length = 192,
 	.pcap_filter = "icmp or icmp6",
 	.pcap_snaplen = 256,
 	.port_args = 0,

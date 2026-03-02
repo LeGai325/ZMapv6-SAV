@@ -144,7 +144,7 @@ int module_6to4_pair_collect_make(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
 
 int module_6to4_pair_collect_validate(const struct ip *ip_hdr, uint32_t len,
 				       UNUSED uint32_t *src_ip,
-				       UNUSED uint32_t *validation,
+				       uint32_t *validation,
 				       UNUSED const struct port_conf *ports)
 {
 	struct ip6_hdr *ip6 = (struct ip6_hdr *)ip_hdr;
@@ -167,6 +167,10 @@ int module_6to4_pair_collect_validate(const struct ip *ip_hdr, uint32_t len,
 	struct icmp6_hdr *quoted_icmp6 = (struct icmp6_hdr *)(&quoted_ip6[1]);
 	pair_payload_t *payload = (pair_payload_t *)(&quoted_icmp6[1]);
 	if (payload->marker != htonl(0x36345450)) {
+		return PACKET_INVALID;
+	}
+	if (payload->v0 != htonl(validation[0]) ||
+	    payload->v1 != htonl(validation[1])) {
 		return PACKET_INVALID;
 	}
 	return PACKET_VALID;

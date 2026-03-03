@@ -10,8 +10,12 @@
 #ifndef IPV6_TARGET_FILE_H
 #define IPV6_TARGET_FILE_H
 
+#include <stdbool.h>
+#include <netinet/in.h>
+
 int ipv6_target_file_init(char *file);
-int ipv6_target_file_get_ipv6(struct in6_addr *dst);
+int ipv6_target_file_get_target(struct in_addr *dst4, bool *has_dst4,
+				 struct in6_addr *dst6);
 int ipv6_target_file_deinit();
 
 #endif

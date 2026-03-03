@@ -51,6 +51,8 @@ static fielddef_t fields[] = {
 	{.name = "mode", .type = "string", .desc = "scan mode"},
 	{.name = "proto", .type = "string", .desc = "module protocol"},
 	{.name = "response_src", .type = "string", .desc = "response source address"},
+	{.name = "payload_outer_dst4", .type = "string", .desc = "outer destination IPv4 carried in payload"},
+	{.name = "payload_outer_dst6", .type = "string", .desc = "outer destination IPv6 carried in payload"},
 };
 
 probe_module_t module_gre_osav = {

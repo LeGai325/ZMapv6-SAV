@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <signal.h>
+#include <stdbool.h>
 
 #include "../lib/includes.h"
 #include "../lib/util.h"
@@ -50,6 +51,13 @@ static uint16_t num_src_ports;
 // IPv6
 static int ipv6 = 0;
 static struct in6_addr ipv6_src;
+
+typedef struct {
+	struct in6_addr src6;
+	struct in6_addr dst6;
+	struct in_addr dst4;
+	uint8_t has_dst4;
+} ipv6_probe_arg_t;
 
 
 void sig_handler_increase_speed(UNUSED int signal)
@@ -306,14 +314,17 @@ int send_run(sock_t st, shard_t *s)
 	uint32_t current_ip = 0;
 	uint16_t current_port = 0;
 	struct in6_addr ipv6_dst;
+	struct in_addr ipv4_dst;
+	bool ipv4_dst_valid = false;
 
 	if (ipv6) {
-		int ret = ipv6_target_file_get_ipv6(&ipv6_dst);
+		int ret = ipv6_target_file_get_target(&ipv4_dst, &ipv4_dst_valid, &ipv6_dst);
 		if (ret != 0) {
 			log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
 			goto cleanup;
 		}
-		probe_data = malloc(2*sizeof(struct in6_addr));
+		current_ip = ipv4_dst_valid ? ipv4_dst.s_addr : 0;
+		probe_data = malloc(sizeof(ipv6_probe_arg_t));
 		current_port = zconf.ports->ports[0];
 	} else {
 		current = shard_get_cur_target(s);
@@ -426,8 +437,11 @@ int send_run(sock_t st, shard_t *s)
 			uint32_t validation[size_of_validation];
 			// IPv6
 			if (ipv6) {
-				((struct in6_addr *) probe_data)[0] = ipv6_src;
-				((struct in6_addr *) probe_data)[1] = ipv6_dst;
+				ipv6_probe_arg_t *arg = (ipv6_probe_arg_t *)probe_data;
+				arg->src6 = ipv6_src;
+				arg->dst6 = ipv6_dst;
+				arg->dst4 = ipv4_dst;
+				arg->has_dst4 = ipv4_dst_valid ? 1 : 0;
 				validate_gen_ipv6(&ipv6_src, &ipv6_dst,
 				 					htons(current_port),
 					 				(uint8_t *)validation);
@@ -489,11 +503,12 @@ int send_run(sock_t st, shard_t *s)
 
 		// IPv6
 		if (ipv6) {
-			int ret = ipv6_target_file_get_ipv6(&ipv6_dst);
+			int ret = ipv6_target_file_get_target(&ipv4_dst, &ipv4_dst_valid, &ipv6_dst);
 			if (ret != 0) {
 				log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
 				goto cleanup;
 			}
+			current_ip = ipv4_dst_valid ? ipv4_dst.s_addr : 0;
 		} else {
 			// Get the next IP to scan
 			current = shard_get_next_target(s);

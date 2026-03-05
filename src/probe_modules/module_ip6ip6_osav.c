@@ -51,6 +51,8 @@ static fielddef_t fields[] = {
 	{.name = "mode", .type = "string", .desc = "scan mode"},
 	{.name = "proto", .type = "string", .desc = "module protocol"},
 	{.name = "response_src", .type = "string", .desc = "response source address"},
+	{.name = "payload_outer_dst4", .type = "string", .desc = "outer destination IPv4 carried in payload"},
+	{.name = "payload_outer_dst6", .type = "string", .desc = "outer destination IPv6 carried in payload"},
 };
 
 probe_module_t module_ip6ip6_osav = {
@@ -67,5 +69,5 @@ probe_module_t module_ip6ip6_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "ip6ip6 osav SAV scanning module. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "ip6ip6 osav SAV scanning module. Output includes payload_outer_dst4/payload_outer_dst6 extracted from received payload for reliable matching. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
 };

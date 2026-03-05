@@ -69,5 +69,5 @@ probe_module_t module_gre6_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "gre6 osav SAV scanning module. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "gre6 osav SAV scanning module. Output includes payload_outer_dst4/payload_outer_dst6 extracted from received payload for reliable matching. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
 };

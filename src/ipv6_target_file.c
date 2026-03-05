@@ -20,6 +20,18 @@
 
 static FILE *fp;
 
+static char *trim(char *s)
+{
+	while (*s == ' ' || *s == '\t' || *s == '\r') {
+		s++;
+	}
+	char *end = s + strlen(s);
+	while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r')) {
+		*--end = '\0';
+	}
+	return s;
+}
+
 int ipv6_target_file_init(char *file)
 {
 	if (strcmp(file, "-") == 0) {
@@ -60,8 +72,8 @@ int ipv6_target_file_get_target(struct in_addr *dst4, bool *has_dst4,
 		char *comma = strchr(line, ',');
 		if (comma) {
 			*comma = '\0';
-			char *ipv4_str = line;
-			char *ipv6_str = comma + 1;
+			char *ipv4_str = trim(line);
+			char *ipv6_str = trim(comma + 1);
 			int rc4 = inet_pton(AF_INET, ipv4_str, dst4);
 			int rc6 = inet_pton(AF_INET6, ipv6_str, dst6);
 			if (rc4 != 1 || rc6 != 1) {
@@ -72,11 +84,12 @@ int ipv6_target_file_get_target(struct in_addr *dst4, bool *has_dst4,
 			}
 			*has_dst4 = true;
 		} else {
-			int rc6 = inet_pton(AF_INET6, line, dst6);
+			char *ipv6_str = trim(line);
+			int rc6 = inet_pton(AF_INET6, ipv6_str, dst6);
 			if (rc6 != 1) {
 				log_fatal(LOGGER_NAME,
 					  "could not parse IPv6 address from line: %s",
-					  line);
+					  ipv6_str);
 				return 1;
 			}
 			dst4->s_addr = 0;

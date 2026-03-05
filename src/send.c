@@ -323,6 +323,7 @@ int send_run(sock_t st, shard_t *s)
 			log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
 			goto cleanup;
 		}
+		current_ip = ipv4_dst_valid ? ipv4_dst.s_addr : 0;
 		probe_data = malloc(sizeof(ipv6_probe_arg_t));
 		current_port = zconf.ports->ports[0];
 	} else {
@@ -507,6 +508,7 @@ int send_run(sock_t st, shard_t *s)
 				log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
 				goto cleanup;
 			}
+			current_ip = ipv4_dst_valid ? ipv4_dst.s_addr : 0;
 		} else {
 			// Get the next IP to scan
 			current = shard_get_next_target(s);

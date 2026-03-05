@@ -19,6 +19,13 @@ typedef struct __attribute__((packed)) {
 	uint32_t validation1;
 } tunnel_sav_payload_t;
 
+typedef struct {
+	struct in6_addr src6;
+	struct in6_addr dst6;
+	struct in_addr dst4;
+	uint8_t has_dst4;
+} tunnel_sav_send_arg_t;
+
 static void parse_args(tunnel_sav_profile_t *p, const char *args)
 {
 	if (!args || !*args) {
@@ -303,12 +310,12 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 						   : IPPROTO_IPV6),
 				payload_len);
 		outer->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
-		struct in6_addr *pair = (struct in6_addr *)arg;
-		outer->ip6_dst = pair[1];
+		tunnel_sav_send_arg_t *pair = (tunnel_sav_send_arg_t *)arg;
+		outer->ip6_dst = pair->dst6;
 		if (p->mode == TUN_SAV_MODE_ISAV) {
-			make_isav_spoof_v6(pair[1], &outer->ip6_src);
+			make_isav_spoof_v6(pair->dst6, &outer->ip6_src);
 		} else {
-			outer->ip6_src = pair[0];
+			outer->ip6_src = pair->src6;
 		}
 		cursor = (uint8_t *)&outer[1];
 		if (p->proto == TUN_SAV_PROTO_GRE6) {
@@ -328,8 +335,8 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 				src6 = p->osav_spoof6;
 			}
 			build_inner_ipv6(cursor, src6, p->scanner_inner6,
-					 (struct in_addr){0}, outer->ip6_dst,
-					 validation);
+					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
+					 outer->ip6_dst, validation);
 		} else {
 			struct in_addr src4 = p->osav_spoof4;
 			if (p->mode == TUN_SAV_MODE_ISAV &&
@@ -337,8 +344,8 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 				src4 = extract_v4_from_v6_tail(outer->ip6_dst);
 			}
 			build_inner_ipv4(cursor, src4, p->scanner_inner4,
-					 (struct in_addr){0}, outer->ip6_dst,
-					 validation);
+					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
+					 outer->ip6_dst, validation);
 		}
 		*buf_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
 			   payload_len;
@@ -406,21 +413,31 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 		struct ip6_hdr *ip6 =
 			(struct ip6_hdr *)&packet[sizeof(struct ether_header)];
 		struct icmp6_hdr *icmp6 = (struct icmp6_hdr *)&ip6[1];
+		tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp6[1]);
 		if (icmp6->icmp6_type == ICMP6_ECHO_REPLY) {
 			cls = "tunnel-reply";
 		} else if (icmp6->icmp6_type == ICMP6_TIME_EXCEEDED) {
 			cls = "tunnel-timxceed";
 		}
 		fs_add_string(fs, "response_src", make_ipv6_str(&ip6->ip6_src), 1);
+		if (p->mode == TUN_SAV_MODE_OSAV) {
+			fs_add_string(fs, "payload_outer_dst4", make_ip_str(payload->outer_dst4), 1);
+			fs_add_string(fs, "payload_outer_dst6", make_ipv6_str(&payload->outer_dst6), 1);
+		}
 	} else {
 		struct ip *ip4 = (struct ip *)&packet[sizeof(struct ether_header)];
 		struct icmp *icmp = (struct icmp *)((char *)ip4 + ip4->ip_hl * 4);
+		tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp[1]);
 		if (icmp->icmp_type == ICMP_ECHOREPLY) {
 			cls = "tunnel-reply";
 		} else if (icmp->icmp_type == ICMP_TIMXCEED) {
 			cls = "tunnel-timxceed";
 		}
 		fs_add_string(fs, "response_src", make_ip_str(ip4->ip_src.s_addr), 1);
+		if (p->mode == TUN_SAV_MODE_OSAV) {
+			fs_add_string(fs, "payload_outer_dst4", make_ip_str(payload->outer_dst4), 1);
+			fs_add_string(fs, "payload_outer_dst6", make_ipv6_str(&payload->outer_dst6), 1);
+		}
 	}
 	fs_add_string(fs, "classification", (char *)cls, 0);
 }

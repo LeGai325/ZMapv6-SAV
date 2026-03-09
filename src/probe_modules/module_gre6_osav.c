@@ -53,6 +53,10 @@ static fielddef_t fields[] = {
 	{.name = "response_src", .type = "string", .desc = "response source address"},
 	{.name = "payload_outer_dst4", .type = "string", .desc = "outer destination IPv4 carried in payload"},
 	{.name = "payload_outer_dst6", .type = "string", .desc = "outer destination IPv6 carried in payload"},
+	{.name = "payload_inner_src4", .type = "string", .desc = "inner source IPv4 carried in payload"},
+	{.name = "payload_inner_dst4", .type = "string", .desc = "inner destination IPv4 carried in payload"},
+	{.name = "payload_inner_src6", .type = "string", .desc = "inner source IPv6 carried in payload"},
+	{.name = "payload_inner_dst6", .type = "string", .desc = "inner destination IPv6 carried in payload"},
 };
 
 probe_module_t module_gre6_osav = {

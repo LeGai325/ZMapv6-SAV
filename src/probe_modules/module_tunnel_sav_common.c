@@ -140,7 +140,7 @@ static int payload_has_marker(const tunnel_sav_payload_t *payload)
 }
 
 static int extract_payload_by_marker(const uint8_t *data, size_t data_len,
-				   tunnel_sav_payload_t *out)
+			   tunnel_sav_payload_t *out)
 {
 	if (data_len < sizeof(tunnel_sav_payload_t)) {
 		return 0;
@@ -154,6 +154,20 @@ static int extract_payload_by_marker(const uint8_t *data, size_t data_len,
 		}
 	}
 	return 0;
+}
+
+static int parse_minimal_payload_v4(const struct ip *ip_hdr, uint32_t len,
+				    struct in_addr *out)
+{
+	uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
+	if (ip_hl_bytes < sizeof(struct ip) ||
+	    len < ip_hl_bytes + sizeof(struct icmp) + sizeof(struct in_addr)) {
+		return 0;
+	}
+	const uint8_t *payload = (const uint8_t *)ip_hdr + ip_hl_bytes +
+				 sizeof(struct icmp);
+	memcpy(out, payload, sizeof(*out));
+	return out->s_addr != 0;
 }
 
 static void make_isav_spoof_v4(struct in_addr dst, struct in_addr *out)
@@ -545,6 +559,18 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 		    ip_hdr->ip_src.s_addr != p->osav_spoof4.s_addr) {
 			return PACKET_INVALID;
 		}
+		if (use_gre_ipip_osav_minimal_payload(p)) {
+			struct icmp *icmp =
+				(struct icmp *)((char *)ip_hdr + ip_hl_bytes);
+			if (icmp->icmp_id != htons(1234) ||
+			    icmp->icmp_seq != htons(1)) {
+				return PACKET_INVALID;
+			}
+			struct in_addr payload_v4 = {0};
+			if (!parse_minimal_payload_v4(ip_hdr, len, &payload_v4)) {
+				return PACKET_INVALID;
+			}
+		}
 		return PACKET_VALID;
 	}
 
@@ -645,6 +671,10 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 					memcpy(&original_target4, &packet[offset],
 					       sizeof(original_target4));
 					original_target = make_ip_str(original_target4.s_addr);
+					if (use_minimal_v4) {
+						have_payload = 1;
+						payload.outer_dst4 = original_target4.s_addr;
+					}
 				}
 			}
 		} else {

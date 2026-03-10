@@ -36,6 +36,13 @@ static int use_gre6_osav_minimal_payload(const tunnel_sav_profile_t *p)
 	       p->outer_ipv6 && p->inner_ipv6;
 }
 
+static int use_gre_ipip_osav_minimal_payload(const tunnel_sav_profile_t *p)
+{
+	return p->mode == TUN_SAV_MODE_OSAV &&
+	       (p->proto == TUN_SAV_PROTO_GRE || p->proto == TUN_SAV_PROTO_IPIP) &&
+	       !p->outer_ipv6 && !p->inner_ipv6;
+}
+
 static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
 {
 	if (p->mode != TUN_SAV_MODE_OSAV) {
@@ -45,7 +52,7 @@ static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
 	    p->proto == TUN_SAV_PROTO_IP6IP6) {
 		return sizeof(struct in6_addr);
 	}
-	if (p->proto == TUN_SAV_PROTO_GRE || p->proto == TUN_SAV_PROTO_IPIP) {
+	if (use_gre_ipip_osav_minimal_payload(p)) {
 		return sizeof(struct in_addr);
 	}
 	return 0;
@@ -205,8 +212,8 @@ static void build_inner_ipv4(uint8_t *buf, struct in_addr src, struct in_addr ds
 	struct icmp *icmp = (struct icmp *)&inner[1];
 	make_icmp_header(icmp);
 	if (minimal_payload_len) {
-		icmp->icmp_id = 0;
-		icmp->icmp_seq = 0;
+		icmp->icmp_id = htons(1234);
+		icmp->icmp_seq = htons(1);
 		if (minimal_payload_len == sizeof(struct in6_addr)) {
 			struct in6_addr *payload6 = (struct in6_addr *)(&icmp[1]);
 			*payload6 = outer_dst6;
@@ -524,10 +531,18 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 
 	uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
 	if (minimal_payload_len) {
-		if (len < sizeof(struct ip) + sizeof(struct icmp) + minimal_payload_len) {
+		uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
+		if (ip_hl_bytes < sizeof(struct ip)) {
+			return PACKET_INVALID;
+		}
+		if (len < ip_hl_bytes + sizeof(struct icmp) + minimal_payload_len) {
 			return PACKET_INVALID;
 		}
 		if (ip_hdr->ip_p != IPPROTO_ICMP) {
+			return PACKET_INVALID;
+		}
+		if (use_gre_ipip_osav_minimal_payload(p) &&
+		    ip_hdr->ip_src.s_addr != p->osav_spoof4.s_addr) {
 			return PACKET_INVALID;
 		}
 		return PACKET_VALID;
@@ -606,6 +621,7 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 	} else {
 		struct ip *ip4 = (struct ip *)&packet[sizeof(struct ether_header)];
 		struct icmp *icmp = (struct icmp *)((char *)ip4 + ip4->ip_hl * 4);
+		int use_minimal_v4 = use_gre_ipip_osav_minimal_payload(p);
 		have_icmp_type = 1;
 		icmp_type = icmp->icmp_type;
 		if (icmp->icmp_type == ICMP_ECHOREPLY) {
@@ -614,7 +630,8 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 			cls = "tunnel-timxceed";
 		}
 		response_src = make_ip_str(ip4->ip_src.s_addr);
-		if (minimal_payload_len) {
+		if (minimal_payload_len &&
+		    (!use_minimal_v4 || ip4->ip_src.s_addr == p->osav_spoof4.s_addr)) {
 			size_t offset = sizeof(struct ether_header) + ip4->ip_hl * 4 +
 				       sizeof(struct icmp);
 			if (len >= offset + minimal_payload_len) {

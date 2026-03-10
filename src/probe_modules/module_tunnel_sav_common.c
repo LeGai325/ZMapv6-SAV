@@ -405,6 +405,7 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 		*buf_len = sizeof(struct ether_header) + sizeof(struct ip) +
 			   total_outer_payload;
 	} else {
+		int minimal_payload = use_gre6_osav_minimal_payload(p);
 		uint16_t inner_len =
 			p->inner_ipv6
 				? (sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) +

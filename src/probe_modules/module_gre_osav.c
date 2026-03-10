@@ -75,5 +75,5 @@ probe_module_t module_gre_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "gre osav SAV scanning module. Uses minimal ICMP/ICMPv6 payload carrying only outer destination address for reply mapping; outputs original_target/icmp_type. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "gre osav SAV scanning module. Uses minimal ICMP payload carrying only outer destination IPv4 for reply mapping; outputs original_target/icmp_type. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
 };

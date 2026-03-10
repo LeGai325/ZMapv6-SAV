@@ -41,10 +41,14 @@ static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
 	if (p->mode != TUN_SAV_MODE_OSAV) {
 		return 0;
 	}
-	if (use_gre6_osav_minimal_payload(p)) {
+	if (use_gre6_osav_minimal_payload(p) ||
+	    p->proto == TUN_SAV_PROTO_IP6IP6) {
 		return sizeof(struct in6_addr);
 	}
-	return p->outer_ipv6 ? sizeof(struct in6_addr) : sizeof(struct in_addr);
+	if (p->proto == TUN_SAV_PROTO_GRE || p->proto == TUN_SAV_PROTO_IPIP) {
+		return sizeof(struct in_addr);
+	}
+	return 0;
 }
 
 static int fs_next_is(fieldset_t *fs, const char *name)

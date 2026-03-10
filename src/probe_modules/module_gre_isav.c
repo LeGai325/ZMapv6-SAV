@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-#include "module_tunnel_sav_common.h"
+#include "module_tunnel_sav_inline.h"
 
 #define UNUSED __attribute__((unused))
 
@@ -51,6 +51,7 @@ static fielddef_t fields[] = {
 	{.name = "mode", .type = "string", .desc = "scan mode"},
 	{.name = "proto", .type = "string", .desc = "module protocol"},
 	{.name = "response_src", .type = "string", .desc = "response source address"},
+	{.name = "remarks", .type = "string", .desc = "packet parsing notes"},
 };
 
 probe_module_t module_gre_isav = {

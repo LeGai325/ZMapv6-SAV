@@ -48,6 +48,8 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 static fielddef_t fields[] = {
 	{.name = "classification", .type = "string", .desc = "response classification"},
 	{.name = "success", .type = "bool", .desc = "whether response indicates SAV weakness"},
+	{.name = "original_target", .type = "string", .desc = "target restored from ICMP/ICMPv6 payload"},
+	{.name = "icmp_type", .type = "int", .desc = "received ICMP/ICMPv6 type"},
 	{.name = "mode", .type = "string", .desc = "scan mode"},
 	{.name = "proto", .type = "string", .desc = "module protocol"},
 	{.name = "response_src", .type = "string", .desc = "response source address"},
@@ -73,5 +75,5 @@ probe_module_t module_4in6_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "4in6 osav SAV scanning module. IPv6 target file supports csv rows 'ipv4,ipv6' (optional header: ipv4,ipv6). Output includes payload_outer_dst4/payload_outer_dst6 extracted from received payload for reliable matching. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "4in6 osav SAV scanning module. IPv6 target file supports csv rows 'ipv4,ipv6' (optional header: ipv4,ipv6). Uses minimal ICMP/ICMPv6 payload carrying only outer destination address for reply mapping; outputs original_target/icmp_type. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
 };

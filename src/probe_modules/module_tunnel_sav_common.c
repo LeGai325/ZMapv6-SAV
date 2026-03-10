@@ -30,6 +30,31 @@ typedef struct {
 	uint8_t has_dst4;
 } tunnel_sav_send_arg_t;
 
+static int use_gre6_osav_minimal_payload(const tunnel_sav_profile_t *p)
+{
+	return p->mode == TUN_SAV_MODE_OSAV && p->proto == TUN_SAV_PROTO_GRE6 &&
+	       p->outer_ipv6 && p->inner_ipv6;
+}
+
+static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
+{
+	if (p->mode != TUN_SAV_MODE_OSAV) {
+		return 0;
+	}
+	if (use_gre6_osav_minimal_payload(p)) {
+		return sizeof(struct in6_addr);
+	}
+	return p->outer_ipv6 ? sizeof(struct in6_addr) : sizeof(struct in_addr);
+}
+
+static int fs_next_is(fieldset_t *fs, const char *name)
+{
+	if (!fs->fds || fs->len >= fs->fds->len) {
+		return 0;
+	}
+	return strcmp(fs->fds->fielddefs[fs->len].name, name) == 0;
+}
+
 static void parse_args(tunnel_sav_profile_t *p, const char *args)
 {
 	if (!args || !*args) {
@@ -159,12 +184,15 @@ static struct in6_addr make_6to4_v6_from_v4(struct in_addr dst4)
 static void build_inner_ipv4(uint8_t *buf, struct in_addr src, struct in_addr dst,
 			     struct in_addr outer_dst4,
 			     struct in6_addr outer_dst6,
-			     uint32_t *validation)
+			     uint32_t *validation,
+			     uint16_t minimal_payload_len)
 {
 	struct ip *inner = (struct ip *)buf;
+	uint16_t icmp_payload_len =
+		minimal_payload_len ? minimal_payload_len : sizeof(tunnel_sav_payload_t);
 	make_ip_header(inner, IPPROTO_ICMP,
 		       htons(sizeof(struct ip) + sizeof(struct icmp) +
-			     sizeof(tunnel_sav_payload_t)));
+			     icmp_payload_len));
 	inner->ip_src = src;
 	inner->ip_dst = dst;
 	inner->ip_sum = 0;
@@ -172,41 +200,69 @@ static void build_inner_ipv4(uint8_t *buf, struct in_addr src, struct in_addr ds
 
 	struct icmp *icmp = (struct icmp *)&inner[1];
 	make_icmp_header(icmp);
-	icmp->icmp_id = htons(validation[2] & 0xFFFF);
+	if (minimal_payload_len) {
+		icmp->icmp_id = 0;
+		icmp->icmp_seq = 0;
+		if (minimal_payload_len == sizeof(struct in6_addr)) {
+			struct in6_addr *payload6 = (struct in6_addr *)(&icmp[1]);
+			*payload6 = outer_dst6;
+		} else {
+			struct in_addr *payload4 = (struct in_addr *)(&icmp[1]);
+			*payload4 = outer_dst4;
+		}
+	} else {
+		icmp->icmp_id = htons(validation[2] & 0xFFFF);
 
-	tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp[1]);
-	fill_payload(payload, outer_dst4, outer_dst6, src, dst, (struct in6_addr)IN6ADDR_ANY_INIT,
-		     (struct in6_addr)IN6ADDR_ANY_INIT, validation);
+		tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp[1]);
+		fill_payload(payload, outer_dst4, outer_dst6, src,
+			     dst, (struct in6_addr)IN6ADDR_ANY_INIT,
+			     (struct in6_addr)IN6ADDR_ANY_INIT, validation);
+	}
 
 	icmp->icmp_cksum = 0;
-	icmp->icmp_cksum = icmp_checksum(
-		(unsigned short *)icmp,
-		sizeof(struct icmp) + sizeof(tunnel_sav_payload_t));
+	icmp->icmp_cksum =
+		icmp_checksum((unsigned short *)icmp,
+			      sizeof(struct icmp) + icmp_payload_len);
 }
 
 static void build_inner_ipv6(uint8_t *buf, struct in6_addr src,
 			     struct in6_addr dst,
 			     struct in_addr outer_dst4,
 			     struct in6_addr outer_dst6,
-			     uint32_t *validation)
+			     uint32_t *validation,
+			     uint16_t minimal_payload_len)
 {
 	struct ip6_hdr *inner = (struct ip6_hdr *)buf;
+	uint16_t icmp_payload_len =
+		minimal_payload_len ? minimal_payload_len : sizeof(tunnel_sav_payload_t);
 	make_ip6_header(inner, IPPROTO_ICMPV6,
-			sizeof(struct icmp6_hdr) + sizeof(tunnel_sav_payload_t));
+			sizeof(struct icmp6_hdr) + icmp_payload_len);
 	inner->ip6_src = src;
 	inner->ip6_dst = dst;
 
 	struct icmp6_hdr *icmp6 = (struct icmp6_hdr *)&inner[1];
 	make_icmp6_header(icmp6);
-	icmp6->icmp6_id = htons(validation[2] & 0xFFFF);
+	if (minimal_payload_len) {
+		icmp6->icmp6_id = 0;
+		icmp6->icmp6_seq = 0;
+		if (minimal_payload_len == sizeof(struct in6_addr)) {
+			struct in6_addr *payload6 = (struct in6_addr *)(&icmp6[1]);
+			*payload6 = outer_dst6;
+		} else {
+			struct in_addr *payload4 = (struct in_addr *)(&icmp6[1]);
+			*payload4 = outer_dst4;
+		}
+	} else {
+		icmp6->icmp6_id = htons(validation[2] & 0xFFFF);
 
-	tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp6[1]);
-	fill_payload(payload, outer_dst4, outer_dst6, (struct in_addr){0}, (struct in_addr){0},
-		     src, dst, validation);
+		tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp6[1]);
+		fill_payload(payload, outer_dst4, outer_dst6, (struct in_addr){0},
+			     (struct in_addr){0}, src, dst, validation);
+	}
 
 	icmp6->icmp6_cksum = 0;
 	icmp6->icmp6_cksum = ipv6_payload_checksum(
-		sizeof(struct icmp6_hdr) + sizeof(tunnel_sav_payload_t), &inner->ip6_src,
+		sizeof(struct icmp6_hdr) + icmp_payload_len, &inner->ip6_src,
 		&inner->ip6_dst, (unsigned short *)icmp6, IPPROTO_ICMPV6);
 }
 
@@ -269,13 +325,16 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 	struct ether_header *eth = (struct ether_header *)buf;
 	uint8_t *cursor = (uint8_t *)&eth[1];
 	struct in6_addr any6 = IN6ADDR_ANY_INIT;
+	uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
 	if (!p->outer_ipv6) {
 		uint16_t inner_len =
 			p->inner_ipv6
 				? (sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) +
-				   sizeof(tunnel_sav_payload_t))
+				   (minimal_payload_len ? minimal_payload_len
+						    : sizeof(tunnel_sav_payload_t)))
 				: (sizeof(struct ip) + sizeof(struct icmp) +
-				   sizeof(tunnel_sav_payload_t));
+				   (minimal_payload_len ? minimal_payload_len
+						    : sizeof(tunnel_sav_payload_t)));
 		uint16_t total_outer_payload =
 			inner_len +
 			((p->proto == TUN_SAV_PROTO_GRE) ? GRE_HEADER_LEN : 0);
@@ -311,12 +370,14 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			} else if (p->mode == TUN_SAV_MODE_OSAV && p->have_osav_spoof6) {
 				src6 = p->osav_spoof6;
 			}
-			if (p->mode == TUN_SAV_MODE_OSAV &&
+			if (minimal_payload_len && p->proto == TUN_SAV_PROTO_6TO4) {
+				dst6 = make_6to4_v6_from_v4(outer->ip_src);
+			} else if (p->mode == TUN_SAV_MODE_OSAV &&
 			    p->proto == TUN_SAV_PROTO_6TO4) {
 				dst6 = make_6to4_v6_from_v4(outer->ip_dst);
 			}
 			build_inner_ipv6(cursor, src6, dst6, outer->ip_dst,
-					 any6, validation);
+					 any6, validation, minimal_payload_len);
 		} else {
 			struct in_addr src4;
 			struct in_addr dst4 = p->scanner_inner4;
@@ -327,11 +388,13 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			} else {
 				src4 = p->osav_spoof4;
 			}
-			if (p->mode == TUN_SAV_MODE_OSAV) {
+			if (minimal_payload_len) {
+				dst4 = outer->ip_src;
+			} else if (p->mode == TUN_SAV_MODE_OSAV) {
 				dst4 = outer->ip_dst;
 			}
 			build_inner_ipv4(cursor, src4, dst4, outer->ip_dst,
-					 any6, validation);
+					 any6, validation, minimal_payload_len);
 		}
 		outer->ip_sum = 0;
 		outer->ip_sum = zmap_ip_checksum((unsigned short *)outer);
@@ -341,9 +404,11 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 		uint16_t inner_len =
 			p->inner_ipv6
 				? (sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) +
-				   sizeof(tunnel_sav_payload_t))
+				   (minimal_payload_len ? minimal_payload_len
+						    : sizeof(tunnel_sav_payload_t)))
 				: (sizeof(struct ip) + sizeof(struct icmp) +
-				   sizeof(tunnel_sav_payload_t));
+				   (minimal_payload_len ? minimal_payload_len
+						    : sizeof(tunnel_sav_payload_t)));
 		uint16_t payload_len =
 			inner_len +
 			((p->proto == TUN_SAV_PROTO_GRE6) ? GRE_HEADER_LEN : 0);
@@ -381,12 +446,14 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			} else if (p->mode == TUN_SAV_MODE_OSAV && p->have_osav_spoof6) {
 				src6 = p->osav_spoof6;
 			}
-			if (p->mode == TUN_SAV_MODE_OSAV) {
+			if (minimal_payload_len) {
+				dst6 = outer->ip6_src;
+			} else if (p->mode == TUN_SAV_MODE_OSAV) {
 				dst6 = outer->ip6_dst;
 			}
 			build_inner_ipv6(cursor, src6, dst6,
 					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
-					 outer->ip6_dst, validation);
+					 outer->ip6_dst, validation, minimal_payload_len);
 		} else {
 			struct in_addr src4 = p->osav_spoof4;
 			struct in_addr dst4 = p->scanner_inner4;
@@ -394,12 +461,14 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			    p->proto == TUN_SAV_PROTO_4IN6) {
 				src4 = extract_v4_from_v6_tail(outer->ip6_dst);
 			}
-			if (p->mode == TUN_SAV_MODE_OSAV && pair->has_dst4) {
+			if (minimal_payload_len) {
+				dst4 = extract_v4_from_v6_tail(outer->ip6_src);
+			} else if (p->mode == TUN_SAV_MODE_OSAV && pair->has_dst4) {
 				dst4 = pair->dst4;
 			}
 			build_inner_ipv4(cursor, src4, dst4,
 					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
-					 outer->ip6_dst, validation);
+					 outer->ip6_dst, validation, minimal_payload_len);
 		}
 		*buf_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
 			   payload_len;
@@ -414,6 +483,18 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 				      UNUSED const struct port_conf *ports)
 {
 	if (p->inner_ipv6) {
+		uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
+		if (minimal_payload_len) {
+			if (len < sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) +
+					  minimal_payload_len) {
+				return PACKET_INVALID;
+			}
+			struct ip6_hdr *ip6 = (struct ip6_hdr *)ip_hdr;
+			if (ip6->ip6_nxt != IPPROTO_ICMPV6) {
+				return PACKET_INVALID;
+			}
+			return PACKET_VALID;
+		}
 		if (len < sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr) +
 			      sizeof(tunnel_sav_payload_t)) {
 			return PACKET_INVALID;
@@ -431,6 +512,17 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 				       len - (sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)),
 				       &payload) ||
 		    !payload_matches(&payload, validation)) {
+			return PACKET_INVALID;
+		}
+		return PACKET_VALID;
+	}
+
+	uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
+	if (minimal_payload_len) {
+		if (len < sizeof(struct ip) + sizeof(struct icmp) + minimal_payload_len) {
+			return PACKET_INVALID;
+		}
+		if (ip_hdr->ip_p != IPPROTO_ICMP) {
 			return PACKET_INVALID;
 		}
 		return PACKET_VALID;
@@ -464,50 +556,147 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 				      UNUSED const struct timespec ts)
 {
 	const char *cls = "tunnel-request";
-	fs_add_uint64(fs, "success", 1);
-	fs_add_string(fs, "mode",
-		      (char *)(p->mode == TUN_SAV_MODE_ISAV ? "isav" : "osav"),
-		      0);
-	fs_add_string(fs, "proto", (char *)p->module_name, 0);
+	char *response_src = NULL;
+	char *original_target = NULL;
+	uint64_t icmp_type = 0;
+	int have_icmp_type = 0;
+	uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
 	tunnel_sav_payload_t payload = {0};
 	int have_payload = 0;
 	if (p->inner_ipv6) {
 		struct ip6_hdr *ip6 =
 			(struct ip6_hdr *)&packet[sizeof(struct ether_header)];
 		struct icmp6_hdr *icmp6 = (struct icmp6_hdr *)&ip6[1];
+		have_icmp_type = 1;
+		icmp_type = icmp6->icmp6_type;
 		if (icmp6->icmp6_type == ICMP6_ECHO_REPLY) {
 			cls = "tunnel-reply";
 		} else if (icmp6->icmp6_type == ICMP6_TIME_EXCEEDED) {
 			cls = "tunnel-timxceed";
 		}
-		fs_add_string(fs, "response_src", make_ipv6_str(&ip6->ip6_src), 1);
-		have_payload = extract_payload_by_marker((const uint8_t *)&icmp6[1],
-					       len > sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)
-						       ? len - (sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr))
-						       : 0,
-					       &payload);
+		response_src = make_ipv6_str(&ip6->ip6_src);
+		if (minimal_payload_len) {
+			size_t offset = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
+				       sizeof(struct icmp6_hdr);
+			if (len >= offset + minimal_payload_len) {
+				if (p->outer_ipv6) {
+					struct in6_addr original_target6 = {0};
+					memcpy(&original_target6, &packet[offset],
+					       sizeof(original_target6));
+					original_target = make_ipv6_str(&original_target6);
+				} else {
+					struct in_addr original_target4 = {0};
+					memcpy(&original_target4, &packet[offset],
+					       sizeof(original_target4));
+					original_target = make_ip_str(original_target4.s_addr);
+				}
+			}
+		} else {
+			have_payload = extract_payload_by_marker((const uint8_t *)&icmp6[1],
+						       len > sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)
+							       ? len - (sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr))
+							       : 0,
+						       &payload);
+		}
 	} else {
 		struct ip *ip4 = (struct ip *)&packet[sizeof(struct ether_header)];
 		struct icmp *icmp = (struct icmp *)((char *)ip4 + ip4->ip_hl * 4);
+		have_icmp_type = 1;
+		icmp_type = icmp->icmp_type;
 		if (icmp->icmp_type == ICMP_ECHOREPLY) {
 			cls = "tunnel-reply";
 		} else if (icmp->icmp_type == ICMP_TIMXCEED) {
 			cls = "tunnel-timxceed";
 		}
-		fs_add_string(fs, "response_src", make_ip_str(ip4->ip_src.s_addr), 1);
-		have_payload = extract_payload_by_marker((const uint8_t *)&icmp[1],
-					       len > sizeof(struct ether_header) + ip4->ip_hl * 4 + sizeof(struct icmp)
-						       ? len - (sizeof(struct ether_header) + ip4->ip_hl * 4 + sizeof(struct icmp))
-						       : 0,
-					       &payload);
+		response_src = make_ip_str(ip4->ip_src.s_addr);
+		if (minimal_payload_len) {
+			size_t offset = sizeof(struct ether_header) + ip4->ip_hl * 4 +
+				       sizeof(struct icmp);
+			if (len >= offset + minimal_payload_len) {
+				if (p->outer_ipv6) {
+					struct in6_addr original_target6 = {0};
+					memcpy(&original_target6, &packet[offset],
+					       sizeof(original_target6));
+					original_target = make_ipv6_str(&original_target6);
+				} else {
+					struct in_addr original_target4 = {0};
+					memcpy(&original_target4, &packet[offset],
+					       sizeof(original_target4));
+					original_target = make_ip_str(original_target4.s_addr);
+				}
+			}
+		} else {
+			have_payload = extract_payload_by_marker((const uint8_t *)&icmp[1],
+						       len > sizeof(struct ether_header) + ip4->ip_hl * 4 + sizeof(struct icmp)
+							       ? len - (sizeof(struct ether_header) + ip4->ip_hl * 4 + sizeof(struct icmp))
+							       : 0,
+						       &payload);
+		}
 	}
 	if (have_payload) {
-		fs_add_string(fs, "payload_outer_dst4", make_ip_str(payload.outer_dst4), 1);
-		fs_add_string(fs, "payload_outer_dst6", make_ipv6_str(&payload.outer_dst6), 1);
-		fs_add_string(fs, "payload_inner_src4", make_ip_str(payload.inner_src4), 1);
-		fs_add_string(fs, "payload_inner_dst4", make_ip_str(payload.inner_dst4), 1);
-		fs_add_string(fs, "payload_inner_src6", make_ipv6_str(&payload.inner_src6), 1);
-		fs_add_string(fs, "payload_inner_dst6", make_ipv6_str(&payload.inner_dst6), 1);
+		if (!original_target) {
+			if (p->outer_ipv6) {
+				original_target = make_ipv6_str(&payload.outer_dst6);
+			} else {
+				original_target = make_ip_str(payload.outer_dst4);
+			}
+		}
 	}
-	fs_add_string(fs, "classification", (char *)cls, 0);
+
+	if (fs_next_is(fs, "classification")) {
+		fs_add_string(fs, "classification", (char *)cls, 0);
+	}
+	if (fs_next_is(fs, "success")) {
+		fs_add_uint64(fs, "success", 1);
+	}
+	if (fs_next_is(fs, "original_target")) {
+		fs_chkadd_string(fs, "original_target", original_target, 1);
+		original_target = NULL;
+	}
+	if (fs_next_is(fs, "icmp_type")) {
+		fs_add_uint64(fs, "icmp_type", have_icmp_type ? icmp_type : 0);
+	}
+	if (fs_next_is(fs, "mode")) {
+		fs_add_string(fs, "mode",
+			      (char *)(p->mode == TUN_SAV_MODE_ISAV ? "isav" : "osav"),
+			      0);
+	}
+	if (fs_next_is(fs, "proto")) {
+		fs_add_string(fs, "proto", (char *)p->module_name, 0);
+	}
+	if (fs_next_is(fs, "response_src")) {
+		fs_chkadd_string(fs, "response_src", response_src, 1);
+		response_src = NULL;
+	}
+	if (fs_next_is(fs, "payload_outer_dst4")) {
+		fs_chkadd_string(fs, "payload_outer_dst4",
+				 have_payload ? make_ip_str(payload.outer_dst4) : NULL, 1);
+	}
+	if (fs_next_is(fs, "payload_outer_dst6")) {
+		fs_chkadd_string(fs, "payload_outer_dst6",
+				 have_payload ? make_ipv6_str(&payload.outer_dst6) : NULL, 1);
+	}
+	if (fs_next_is(fs, "payload_inner_src4")) {
+		fs_chkadd_string(fs, "payload_inner_src4",
+				 have_payload ? make_ip_str(payload.inner_src4) : NULL, 1);
+	}
+	if (fs_next_is(fs, "payload_inner_dst4")) {
+		fs_chkadd_string(fs, "payload_inner_dst4",
+				 have_payload ? make_ip_str(payload.inner_dst4) : NULL, 1);
+	}
+	if (fs_next_is(fs, "payload_inner_src6")) {
+		fs_chkadd_string(fs, "payload_inner_src6",
+				 have_payload ? make_ipv6_str(&payload.inner_src6) : NULL, 1);
+	}
+	if (fs_next_is(fs, "payload_inner_dst6")) {
+		fs_chkadd_string(fs, "payload_inner_dst6",
+				 have_payload ? make_ipv6_str(&payload.inner_dst6) : NULL, 1);
+	}
+
+	if (response_src) {
+		free(response_src);
+	}
+	if (original_target) {
+		free(original_target);
+	}
 }

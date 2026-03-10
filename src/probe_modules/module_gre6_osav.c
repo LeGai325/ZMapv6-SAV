@@ -48,6 +48,8 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 static fielddef_t fields[] = {
 	{.name = "classification", .type = "string", .desc = "response classification"},
 	{.name = "success", .type = "bool", .desc = "whether response indicates SAV weakness"},
+	{.name = "original_target", .type = "string", .desc = "IPv6 target restored from 16-byte ICMPv6 payload"},
+	{.name = "icmp_type", .type = "int", .desc = "received ICMPv6 type"},
 	{.name = "mode", .type = "string", .desc = "scan mode"},
 	{.name = "proto", .type = "string", .desc = "module protocol"},
 	{.name = "response_src", .type = "string", .desc = "response source address"},
@@ -73,5 +75,5 @@ probe_module_t module_gre6_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "gre6 osav SAV scanning module. Output includes payload_outer_dst4/payload_outer_dst6 extracted from received payload for reliable matching. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "gre6 osav SAV scanning module. Follows IPv6->GRE->IPv6->ICMPv6 probing with 16-byte payload carrying outer destination IPv6 for reply mapping; outputs original_target and icmp_type. Optional --probe-args inner_src6=<spoofed IPv6>,inner_dst6=<inner dst IPv6>",
 };

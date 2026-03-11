@@ -215,7 +215,7 @@ probe_module_t module_6to4_pair_collect = {
 	.validate_packet = &module_6to4_pair_collect_validate,
 	.process_packet = &module_6to4_pair_collect_process,
 	.close = NULL,
-	.helptext = "Collect 6to4 IPv4-IPv6 tunnel pairs. Use --ipv6-source-ip and optional --probe-args=inner_dst6=<pure IPv6 target>",
+	.helptext = "Collect 6to4 IPv4-IPv6 tunnel pairs via IPv4-encapsulated ICMPv6 Time Exceeded. Use --ipv6-source-ip, --ipv6-target-file (csv ipv4,ipv6) and optional --probe-args=inner_dst6=<pure IPv6 target>.",
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
 };

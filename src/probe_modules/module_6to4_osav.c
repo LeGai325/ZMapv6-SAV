@@ -75,5 +75,5 @@ probe_module_t module_6to4_osav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "6to4 osav SAV scanning module. IPv6 target file supports csv rows 'ipv4,ipv6' (optional header: ipv4,ipv6). Uses minimal ICMP/ICMPv6 payload carrying only outer destination address for reply mapping; outputs original_target/icmp_type. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "6to4 osav SAV scanning module. Use --ipv6-target-file with csv rows 'ipv4,ipv6'. Packet build: outer src=local IPv4, outer dst=csv IPv4, inner src=--probe-args inner_src6, inner dst=local IPv6.",
 };

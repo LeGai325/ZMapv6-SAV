@@ -73,5 +73,5 @@ probe_module_t module_4in6_isav = {
 	.close = NULL,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "4in6 isav SAV scanning module. IPv6 target file supports csv rows 'ipv4,ipv6' (optional header: ipv4,ipv6). Output includes payload_outer_dst4/payload_outer_dst6 extracted from received payload for reliable matching. Optional --probe-args inner_dst4=,inner_dst6=,inner_src4=,inner_src6=",
+	.helptext = "4in6 isav SAV scanning module. Use --ipv6-target-file with csv rows 'ipv4,ipv6'. Packet build: outer src spoofed from target IPv6, outer dst=csv IPv6, inner src=csv IPv4, inner dst=local IPv4.",
 };

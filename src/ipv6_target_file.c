@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <strings.h>
 
 #include "../lib/logger.h"
 
@@ -65,32 +66,39 @@ int ipv6_target_file_get_target(struct in_addr *dst4, bool *has_dst4,
 		if (line[0] == '\0' || line[0] == '#') {
 			continue;
 		}
-		if (strcmp(line, "ipv4,ipv6") == 0) {
+		char *line_trimmed = trim(line);
+		if (strcasecmp(line_trimmed, "ipv4,ipv6") == 0) {
 			continue;
 		}
 
-		char *comma = strchr(line, ',');
+		char *comma = strchr(line_trimmed, ',');
 		if (comma) {
 			*comma = '\0';
-			char *ipv4_str = trim(line);
+			char *ipv4_str = trim(line_trimmed);
 			char *ipv6_str = trim(comma + 1);
+			if (ipv4_str[0] == '\0' || ipv6_str[0] == '\0') {
+				log_warn(LOGGER_NAME,
+					 "skipping malformed IPv4/IPv6 pair line (empty field): %s,%s",
+					 ipv4_str, ipv6_str);
+				continue;
+			}
 			int rc4 = inet_pton(AF_INET, ipv4_str, dst4);
 			int rc6 = inet_pton(AF_INET6, ipv6_str, dst6);
 			if (rc4 != 1 || rc6 != 1) {
-				log_fatal(LOGGER_NAME,
-					  "could not parse IPv4/IPv6 pair from line: %s,%s",
-					  ipv4_str, ipv6_str);
-				return 1;
+				log_warn(LOGGER_NAME,
+					 "skipping malformed IPv4/IPv6 pair line: %s,%s",
+					 ipv4_str, ipv6_str);
+				continue;
 			}
 			*has_dst4 = true;
 		} else {
-			char *ipv6_str = trim(line);
+			char *ipv6_str = trim(line_trimmed);
 			int rc6 = inet_pton(AF_INET6, ipv6_str, dst6);
 			if (rc6 != 1) {
-				log_fatal(LOGGER_NAME,
-					  "could not parse IPv6 address from line: %s",
-					  ipv6_str);
-				return 1;
+				log_warn(LOGGER_NAME,
+					 "skipping malformed IPv6 address line: %s",
+					 ipv6_str);
+				continue;
 			}
 			dst4->s_addr = 0;
 			*has_dst4 = false;

@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "../../lib/includes.h"
+#include "../../lib/logger.h"
 #include "packet.h"
 #include "module_tunnel_sav_common.h"
 
@@ -58,6 +60,33 @@ static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
 	return 0;
 }
 
+
+static void close_result_csv(tunnel_sav_profile_t *p)
+{
+	if (p->result_csv_fp) {
+		fclose(p->result_csv_fp);
+		p->result_csv_fp = NULL;
+	}
+	if (p->result_csv_lock_initialized) {
+		pthread_mutex_destroy(&p->result_csv_lock);
+		p->result_csv_lock_initialized = false;
+	}
+	if (p->result_csv_path) {
+		free(p->result_csv_path);
+		p->result_csv_path = NULL;
+	}
+}
+
+static void parse_result_csv_arg(tunnel_sav_profile_t *p, const char *key, const char *value)
+{
+	if (!strcmp(key, "result_csv") || !strcmp(key, "result-csv")) {
+		if (p->result_csv_path) {
+			free(p->result_csv_path);
+		}
+		p->result_csv_path = strdup(value);
+	}
+}
+
 static int fs_next_is(fieldset_t *fs, const char *name)
 {
 	if (!fs->fds || fs->len >= fs->fds->len) {
@@ -85,6 +114,7 @@ static void parse_args(tunnel_sav_profile_t *p, const char *args)
 		*eq = '\0';
 		char *k = tok;
 		char *v = eq + 1;
+		parse_result_csv_arg(p, k, v);
 		if (!strcmp(k, "inner_dst4")) {
 			inet_pton(AF_INET, v, &p->scanner_inner4);
 		} else if (!strcmp(k, "inner_src4") || !strcmp(k, "spoof_inner4")) {
@@ -312,6 +342,19 @@ int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *p,
 		p->have_inner6 = true;
 	}
 	parse_args(p, conf->probe_args);
+	p->spoof_match_count = 0;
+	p->csv_write_count = 0;
+	if (p->result_csv_path && !p->result_csv_fp) {
+		p->result_csv_fp = fopen(p->result_csv_path, "a");
+		if (!p->result_csv_fp) {
+			log_fatal(p->module_name, "unable to open result csv %s: %s",
+				  p->result_csv_path, strerror(errno));
+		}
+		if (pthread_mutex_init(&p->result_csv_lock, NULL) != 0) {
+			log_fatal(p->module_name, "unable to initialize result csv mutex");
+		}
+		p->result_csv_lock_initialized = true;
+	}
 
 	if (!p->outer_ipv6) {
 		if (p->mode == TUN_SAV_MODE_OSAV) {
@@ -411,8 +454,12 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			if (p->proto == TUN_SAV_PROTO_6TO4) {
 				dst6 = p->scanner_inner6;
 			}
+			struct in6_addr payload_dst6 = any6;
+			if (p->proto == TUN_SAV_PROTO_6TO4 && pair) {
+				payload_dst6 = pair->dst6;
+			}
 			build_inner_ipv6(cursor, src6, dst6, outer->ip_dst,
-					 any6, validation, minimal_payload_len);
+					 payload_dst6, validation, minimal_payload_len);
 		} else {
 			struct in_addr src4;
 			struct in_addr dst4 = p->scanner_inner4;
@@ -609,6 +656,51 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 	return PACKET_VALID;
 }
 
+
+static int is_spoof_source_match(const tunnel_sav_profile_t *p, const u_char *packet)
+{
+	const uint8_t *ip_ptr = packet + sizeof(struct ether_header);
+	if (p->outer_ipv6) {
+		const struct ip6_hdr *ip6 = (const struct ip6_hdr *)ip_ptr;
+		if (!p->have_osav_spoof6) {
+			return 0;
+		}
+		return memcmp(&ip6->ip6_src, &p->osav_spoof6, sizeof(struct in6_addr)) == 0;
+	}
+	const struct ip *ip4 = (const struct ip *)ip_ptr;
+	return ip4->ip_src.s_addr == p->osav_spoof4.s_addr;
+}
+
+static void maybe_record_payload_pair(tunnel_sav_profile_t *p, const tunnel_sav_payload_t *payload, int have_payload, const u_char *packet)
+{
+	if (p->mode != TUN_SAV_MODE_OSAV || p->proto != TUN_SAV_PROTO_4IN6 && p->proto != TUN_SAV_PROTO_6TO4) {
+		return;
+	}
+	if (!p->result_csv_fp || !have_payload) {
+		return;
+	}
+	if (!is_spoof_source_match(p, packet)) {
+		return;
+	}
+	char v4buf[INET_ADDRSTRLEN] = {0};
+	char v6buf[INET6_ADDRSTRLEN] = {0};
+	struct in_addr v4 = {.s_addr = payload->outer_dst4};
+	inet_ntop(AF_INET, &v4, v4buf, sizeof(v4buf));
+	inet_ntop(AF_INET6, &payload->outer_dst6, v6buf, sizeof(v6buf));
+
+	pthread_mutex_lock(&p->result_csv_lock);
+	p->spoof_match_count++;
+	if (fprintf(p->result_csv_fp, "%s,%s\n", v4buf, v6buf) > 0) {
+		fflush(p->result_csv_fp);
+		p->csv_write_count++;
+		log_info(p->module_name, "spoof_match_count=%" PRIu64 " csv_write_count=%" PRIu64 " wrote=%s,%s",
+			 p->spoof_match_count, p->csv_write_count, v4buf, v6buf);
+	} else {
+		log_error(p->module_name, "failed writing result csv %s", p->result_csv_path ? p->result_csv_path : "(null)");
+	}
+	pthread_mutex_unlock(&p->result_csv_lock);
+}
+
 void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 				      const u_char *packet,
 				      uint32_t len, fieldset_t *fs,
@@ -709,6 +801,8 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 		}
 	}
 
+	maybe_record_payload_pair(p, &payload, have_payload, packet);
+
 	if (fs_next_is(fs, "classification")) {
 		fs_add_string(fs, "classification", (char *)cls, 0);
 	}
@@ -765,4 +859,10 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 	if (original_target) {
 		free(original_target);
 	}
+}
+
+
+void tunnel_sav_common_close(tunnel_sav_profile_t *p)
+{
+	close_result_csv(p);
 }

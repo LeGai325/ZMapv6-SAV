@@ -45,6 +45,15 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 	tunnel_sav_common_process_packet(&profile, packet, len, fs, validation, ts);
 }
 
+static int module_close(struct state_conf *c, struct state_send *s, struct state_recv *r)
+{
+	(void)c;
+	(void)s;
+	(void)r;
+	tunnel_sav_common_close(&profile);
+	return EXIT_SUCCESS;
+}
+
 static fielddef_t fields[] = {
 	{.name = "classification", .type = "string", .desc = "response classification"},
 	{.name = "success", .type = "bool", .desc = "whether response indicates SAV weakness"},
@@ -72,8 +81,8 @@ probe_module_t module_4in6_osav = {
 	.make_packet = &make_packet,
 	.process_packet = &process_packet,
 	.validate_packet = &validate_packet,
-	.close = NULL,
+	.close = &module_close,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "4in6 osav SAV scanning module. Use --ipv6-target-file with csv rows 'ipv4,ipv6'. Packet build: outer src=local IPv6, outer dst=csv IPv6, inner src=--probe-args inner_src4, inner dst=local IPv4.",
+	.helptext = "4in6 osav SAV scanning module. Use --ipv6-target-file with csv rows 'ipv4,ipv6'. Packet build: outer src=local IPv6, outer dst=csv IPv6, inner src=--probe-args inner_src4, inner dst=local IPv4. Optional --probe-args result_csv=<path> to append matched payload v4,v6 pairs.",
 };

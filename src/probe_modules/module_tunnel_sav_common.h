@@ -2,6 +2,8 @@
 #define MODULE_TUNNEL_SAV_COMMON_H
 
 #include <stdbool.h>
+#include <stdio.h>
+#include <pthread.h>
 #include "probe_modules.h"
 
 typedef enum {
@@ -31,6 +33,12 @@ typedef struct {
 	struct in6_addr osav_spoof6;
 	bool have_inner6;
 	bool have_osav_spoof6;
+	char *result_csv_path;
+	FILE *result_csv_fp;
+	uint64_t spoof_match_count;
+	uint64_t csv_write_count;
+	pthread_mutex_t result_csv_lock;
+	bool result_csv_lock_initialized;
 } tunnel_sav_profile_t;
 
 int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *profile,
@@ -54,5 +62,7 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *profile,
 				      uint32_t len, fieldset_t *fs,
 				      uint32_t *validation,
 				      const struct timespec ts);
+
+void tunnel_sav_common_close(tunnel_sav_profile_t *profile);
 
 #endif

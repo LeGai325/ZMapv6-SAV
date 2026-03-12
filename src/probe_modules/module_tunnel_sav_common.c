@@ -290,6 +290,8 @@ static void build_inner_ipv6(uint8_t *buf, struct in6_addr src,
 			     struct in6_addr dst,
 			     struct in_addr outer_dst4,
 			     struct in6_addr outer_dst6,
+			     struct in_addr payload_inner_src4,
+			     struct in_addr payload_inner_dst4,
 			     uint32_t *validation,
 			     uint16_t minimal_payload_len)
 {
@@ -317,8 +319,8 @@ static void build_inner_ipv6(uint8_t *buf, struct in6_addr src,
 		icmp6->icmp6_id = htons(validation[2] & 0xFFFF);
 
 		tunnel_sav_payload_t *payload = (tunnel_sav_payload_t *)(&icmp6[1]);
-		fill_payload(payload, outer_dst4, outer_dst6, (struct in_addr){0},
-			     (struct in_addr){0}, src, dst, validation);
+		fill_payload(payload, outer_dst4, outer_dst6, payload_inner_src4,
+			     payload_inner_dst4, src, dst, validation);
 	}
 
 	icmp6->icmp6_cksum = 0;
@@ -459,7 +461,9 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 				payload_dst6 = pair->dst6;
 			}
 			build_inner_ipv6(cursor, src6, dst6, outer->ip_dst,
-					 payload_dst6, validation, minimal_payload_len);
+					 payload_dst6, p->osav_spoof4,
+					 p->scanner_inner4, validation,
+					 minimal_payload_len);
 		} else {
 			struct in_addr src4;
 			struct in_addr dst4 = p->scanner_inner4;
@@ -535,7 +539,9 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 			}
 			build_inner_ipv6(cursor, src6, dst6,
 					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
-					 outer->ip6_dst, validation, minimal_payload_len);
+					 outer->ip6_dst, p->osav_spoof4,
+					 p->scanner_inner4, validation,
+					 minimal_payload_len);
 		} else {
 			struct in_addr src4 = p->osav_spoof4;
 			struct in_addr dst4 = p->scanner_inner4;
@@ -671,6 +677,13 @@ static int is_spoof_source_match(const tunnel_sav_profile_t *p, const u_char *pa
 	return ip4->ip_src.s_addr == p->osav_spoof4.s_addr;
 }
 
+static int payload_inner4_matches_profile(const tunnel_sav_profile_t *p,
+					 const tunnel_sav_payload_t *payload)
+{
+	return payload->inner_src4 == p->osav_spoof4.s_addr &&
+	       payload->inner_dst4 == p->scanner_inner4.s_addr;
+}
+
 static void maybe_record_payload_pair(tunnel_sav_profile_t *p, const tunnel_sav_payload_t *payload, int have_payload, const u_char *packet)
 {
 	if (p->mode != TUN_SAV_MODE_OSAV || p->proto != TUN_SAV_PROTO_4IN6 && p->proto != TUN_SAV_PROTO_6TO4) {
@@ -682,6 +695,9 @@ static void maybe_record_payload_pair(tunnel_sav_profile_t *p, const tunnel_sav_
 	if (!is_spoof_source_match(p, packet)) {
 		return;
 	}
+	if (!payload_inner4_matches_profile(p, payload)) {
+		return;
+	}
 	char v4buf[INET_ADDRSTRLEN] = {0};
 	char v6buf[INET6_ADDRSTRLEN] = {0};
 	struct in_addr v4 = {.s_addr = payload->outer_dst4};
@@ -689,9 +705,9 @@ static void maybe_record_payload_pair(tunnel_sav_profile_t *p, const tunnel_sav_
 	inet_ntop(AF_INET6, &payload->outer_dst6, v6buf, sizeof(v6buf));
 
 	pthread_mutex_lock(&p->result_csv_lock);
-	p->spoof_match_count++;
 	if (fprintf(p->result_csv_fp, "%s,%s\n", v4buf, v6buf) > 0) {
 		fflush(p->result_csv_fp);
+		p->spoof_match_count++;
 		p->csv_write_count++;
 		log_info(p->module_name, "spoof_match_count=%" PRIu64 " csv_write_count=%" PRIu64 " wrote=%s,%s",
 			 p->spoof_match_count, p->csv_write_count, v4buf, v6buf);

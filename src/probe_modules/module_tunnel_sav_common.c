@@ -32,10 +32,22 @@ typedef struct {
 	uint8_t has_dst4;
 } tunnel_sav_send_arg_t;
 
+typedef struct tunnel_sav_pair_entry {
+	uint32_t v4_addr;
+	struct in6_addr v6_addr;
+	uint8_t matched;
+} tunnel_sav_pair_entry_t;
+
 static int use_osav_pair_text_payload(const tunnel_sav_profile_t *p)
 {
 	return p->mode == TUN_SAV_MODE_OSAV &&
 	       (p->proto == TUN_SAV_PROTO_4IN6 || p->proto == TUN_SAV_PROTO_6TO4);
+}
+
+static int use_4in6_isav_pair_tracking(const tunnel_sav_profile_t *p)
+{
+	return p->mode == TUN_SAV_MODE_ISAV && p->proto == TUN_SAV_PROTO_4IN6 &&
+	       p->outer_ipv6 && !p->inner_ipv6;
 }
 
 static int use_gre6_osav_minimal_payload(const tunnel_sav_profile_t *p)
@@ -84,6 +96,105 @@ static void close_result_csv(tunnel_sav_profile_t *p)
 		free(p->result_csv_path);
 		p->result_csv_path = NULL;
 	}
+}
+
+static void close_isav_pair_table(tunnel_sav_profile_t *p)
+{
+	if (p->isav_pairs) {
+		free(p->isav_pairs);
+		p->isav_pairs = NULL;
+	}
+	p->isav_pair_count = 0;
+	p->isav_pair_capacity = 0;
+	if (p->isav_pair_lock_initialized) {
+		pthread_mutex_destroy(&p->isav_pair_lock);
+		p->isav_pair_lock_initialized = false;
+	}
+}
+
+static void ensure_isav_pair_lock(tunnel_sav_profile_t *p)
+{
+	if (p->isav_pair_lock_initialized) {
+		return;
+	}
+	if (pthread_mutex_init(&p->isav_pair_lock, NULL) != 0) {
+		log_fatal(p->module_name, "unable to initialize isav pair mutex");
+	}
+	p->isav_pair_lock_initialized = true;
+}
+
+static long find_isav_pair_index(const tunnel_sav_profile_t *p, uint32_t v4_addr)
+{
+	for (size_t i = 0; i < p->isav_pair_count; i++) {
+		if (p->isav_pairs[i].v4_addr == v4_addr) {
+			return (long)i;
+		}
+	}
+	return -1;
+}
+
+static void register_isav_pair(tunnel_sav_profile_t *p, struct in_addr v4,
+			       struct in6_addr v6)
+{
+	if (!use_4in6_isav_pair_tracking(p)) {
+		return;
+	}
+	ensure_isav_pair_lock(p);
+	pthread_mutex_lock(&p->isav_pair_lock);
+	if (find_isav_pair_index(p, v4.s_addr) >= 0) {
+		pthread_mutex_unlock(&p->isav_pair_lock);
+		return;
+	}
+	if (p->isav_pair_count == p->isav_pair_capacity) {
+		size_t new_cap = p->isav_pair_capacity ? p->isav_pair_capacity * 2 : 1024;
+		tunnel_sav_pair_entry_t *new_pairs =
+			realloc(p->isav_pairs, new_cap * sizeof(*new_pairs));
+		if (!new_pairs) {
+			pthread_mutex_unlock(&p->isav_pair_lock);
+			log_fatal(p->module_name, "unable to grow 4in6 isav pair table");
+		}
+		p->isav_pairs = new_pairs;
+		p->isav_pair_capacity = new_cap;
+	}
+	p->isav_pairs[p->isav_pair_count++] = (tunnel_sav_pair_entry_t){
+		.v4_addr = v4.s_addr,
+		.v6_addr = v6,
+		.matched = 0,
+	};
+	pthread_mutex_unlock(&p->isav_pair_lock);
+}
+
+static int consume_isav_pair_match(tunnel_sav_profile_t *p, uint32_t v4_addr,
+				   struct in6_addr *out_v6)
+{
+	if (!use_4in6_isav_pair_tracking(p)) {
+		return 0;
+	}
+	ensure_isav_pair_lock(p);
+	pthread_mutex_lock(&p->isav_pair_lock);
+	long idx = find_isav_pair_index(p, v4_addr);
+	if (idx < 0 || p->isav_pairs[idx].matched) {
+		pthread_mutex_unlock(&p->isav_pair_lock);
+		return 0;
+	}
+	p->isav_pairs[idx].matched = 1;
+	if (out_v6) {
+		*out_v6 = p->isav_pairs[idx].v6_addr;
+	}
+	pthread_mutex_unlock(&p->isav_pair_lock);
+	return 1;
+}
+
+static int is_known_isav_pair_v4(tunnel_sav_profile_t *p, uint32_t v4_addr)
+{
+	if (!use_4in6_isav_pair_tracking(p)) {
+		return 0;
+	}
+	ensure_isav_pair_lock(p);
+	pthread_mutex_lock(&p->isav_pair_lock);
+	int known = find_isav_pair_index(p, v4_addr) >= 0;
+	pthread_mutex_unlock(&p->isav_pair_lock);
+	return known;
 }
 
 static int payload_to_csv_pair(const uint8_t *data, size_t data_len,
@@ -437,6 +548,13 @@ int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *p,
 		}
 	}
 
+	if (use_4in6_isav_pair_tracking(p)) {
+		char local4buf[INET_ADDRSTRLEN] = {0};
+		inet_ntop(AF_INET, &p->scanner_inner4, local4buf, sizeof(local4buf));
+		asprintf((char **)&module->pcap_filter, "icmp and dst host %s", local4buf);
+		return EXIT_SUCCESS;
+	}
+
 	if (use_osav_pair_text_payload(p)) {
 		if (p->proto == TUN_SAV_PROTO_4IN6) {
 			char spoof4buf[INET_ADDRSTRLEN] = {0};
@@ -499,7 +617,7 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 				  size_t *buf_len, ipaddr_n_t src_ip,
 				  ipaddr_n_t dst_ip, UNUSED port_n_t dst_port,
 				  uint8_t ttl, uint32_t *validation,
-				  UNUSED int probe_num, uint16_t ip_id,
+				  int probe_num, uint16_t ip_id,
 				  void *arg)
 {
 	struct ether_header *eth = (struct ether_header *)buf;
@@ -673,6 +791,17 @@ int tunnel_sav_common_make_packet(tunnel_sav_profile_t *p, void *buf,
 					 pair->has_dst4 ? pair->dst4 : (struct in_addr){0},
 					 outer->ip6_dst, validation, minimal_payload_len,
 					 csv_pair_payload, csv_pair_payload_len);
+			if (use_4in6_isav_pair_tracking(p) && pair && pair->has_dst4) {
+				register_isav_pair(p, pair->dst4, pair->dst6);
+				struct ip *inner4 = (struct ip *)cursor;
+				struct icmp *inner_icmp = (struct icmp *)&inner4[1];
+				inner_icmp->icmp_id = htons(1234);
+				inner_icmp->icmp_seq = htons((uint16_t)(probe_num + 1));
+				inner_icmp->icmp_cksum = 0;
+				inner_icmp->icmp_cksum =
+					icmp_checksum((unsigned short *)inner_icmp,
+						      sizeof(struct icmp));
+			}
 		}
 		*buf_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
 			   payload_len;
@@ -741,6 +870,25 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 	}
 
 	uint16_t minimal_payload_len = get_osav_minimal_payload_len(p);
+	if (use_4in6_isav_pair_tracking(p)) {
+		uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
+		if (ip_hl_bytes < sizeof(struct ip) ||
+		    len < ip_hl_bytes + sizeof(struct icmp) ||
+		    ip_hdr->ip_p != IPPROTO_ICMP ||
+		    ip_hdr->ip_dst.s_addr != p->scanner_inner4.s_addr) {
+			return PACKET_INVALID;
+		}
+		const struct icmp *icmp =
+			(const struct icmp *)((const char *)ip_hdr + ip_hl_bytes);
+		if (icmp->icmp_type != ICMP_ECHO ||
+		    !is_known_isav_pair_v4(p, ip_hdr->ip_src.s_addr)) {
+			return PACKET_INVALID;
+		}
+		if (src_ip) {
+			*src_ip = ip_hdr->ip_src.s_addr;
+		}
+		return PACKET_VALID;
+	}
 	if (use_osav_pair_text_payload(p)) {
 		uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
 		if (ip_hl_bytes < sizeof(struct ip) ||
@@ -898,6 +1046,47 @@ static void maybe_record_csv_payload_pair(tunnel_sav_profile_t *p,
 	pthread_mutex_unlock(&p->result_csv_lock);
 }
 
+static void maybe_record_4in6_isav_pair(tunnel_sav_profile_t *p, const u_char *packet)
+{
+	if (!use_4in6_isav_pair_tracking(p)) {
+		return;
+	}
+	const struct ip *ip4 =
+		(const struct ip *)(packet + sizeof(struct ether_header));
+	if (ip4->ip_p != IPPROTO_ICMP ||
+	    ip4->ip_dst.s_addr != p->scanner_inner4.s_addr) {
+		return;
+	}
+	uint16_t ip_hl_bytes = (uint16_t)(ip4->ip_hl * 4);
+	const struct icmp *icmp = (const struct icmp *)((const uint8_t *)ip4 + ip_hl_bytes);
+	if (icmp->icmp_type != ICMP_ECHO) {
+		return;
+	}
+	struct in6_addr matched_v6 = IN6ADDR_ANY_INIT;
+	if (!consume_isav_pair_match(p, ip4->ip_src.s_addr, &matched_v6)) {
+		return;
+	}
+	p->spoof_match_count++;
+	if (!p->result_csv_fp) {
+		return;
+	}
+	char v4buf[INET_ADDRSTRLEN] = {0};
+	char v6buf[INET6_ADDRSTRLEN] = {0};
+	struct in_addr v4 = {.s_addr = ip4->ip_src.s_addr};
+	inet_ntop(AF_INET, &v4, v4buf, sizeof(v4buf));
+	inet_ntop(AF_INET6, &matched_v6, v6buf, sizeof(v6buf));
+
+	pthread_mutex_lock(&p->result_csv_lock);
+	if (fprintf(p->result_csv_fp, "%s,%s\n", v4buf, v6buf) > 0) {
+		fflush(p->result_csv_fp);
+		p->csv_write_count++;
+		log_info(p->module_name,
+			 "recv_count=%" PRIu64 " csv_write_count=%" PRIu64 " wrote=%s,%s",
+			 p->spoof_match_count, p->csv_write_count, v4buf, v6buf);
+	}
+	pthread_mutex_unlock(&p->result_csv_lock);
+}
+
 void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 				      const u_char *packet,
 				      uint32_t len, fieldset_t *fs,
@@ -1033,6 +1222,7 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 	maybe_record_payload_pair(p, &payload, have_payload, packet);
 	maybe_record_csv_payload_pair(p, &csv_payload_v4, &csv_payload_v6,
 				      have_csv_pair, packet);
+	maybe_record_4in6_isav_pair(p, packet);
 
 	if (fs_next_is(fs, "classification")) {
 		fs_add_string(fs, "classification", (char *)cls, 0);
@@ -1096,4 +1286,5 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 void tunnel_sav_common_close(tunnel_sav_profile_t *p)
 {
 	close_result_csv(p);
+	close_isav_pair_table(p);
 }

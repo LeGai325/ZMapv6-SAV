@@ -20,6 +20,8 @@ typedef enum {
 	TUN_SAV_PROTO_6TO4 = 5,
 } tun_sav_proto_t;
 
+struct tunnel_sav_pair_entry;
+
 typedef struct {
 	tun_sav_mode_t mode;
 	tun_sav_proto_t proto;
@@ -39,6 +41,11 @@ typedef struct {
 	uint64_t csv_write_count;
 	pthread_mutex_t result_csv_lock;
 	bool result_csv_lock_initialized;
+	struct tunnel_sav_pair_entry *isav_pairs;
+	size_t isav_pair_count;
+	size_t isav_pair_capacity;
+	pthread_mutex_t isav_pair_lock;
+	bool isav_pair_lock_initialized;
 } tunnel_sav_profile_t;
 
 int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *profile,

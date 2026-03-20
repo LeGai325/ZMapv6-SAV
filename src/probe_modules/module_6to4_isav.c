@@ -72,8 +72,14 @@ static int global_initialize(struct state_conf *conf)
 	}
 	char local6buf[INET6_ADDRSTRLEN] = {0};
 	inet_ntop(AF_INET6, &profile.scanner_inner6, local6buf, sizeof(local6buf));
-	asprintf((char **)&module_6to4_isav.pcap_filter,
-		 "icmp6 and dst host %s", local6buf);
+	const char *fmt = "icmp6 and dst host %s";
+	size_t filter_len = strlen(fmt) + strlen(local6buf) + 1;
+	char *filter = malloc(filter_len);
+	if (!filter) {
+		return EXIT_FAILURE;
+	}
+	snprintf(filter, filter_len, fmt, local6buf);
+	module_6to4_isav.pcap_filter = filter;
 	return EXIT_SUCCESS;
 }
 
@@ -90,7 +96,7 @@ static int make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
 	if (dst_ip == 0) {
 		return EXIT_FAILURE;
 	}
-	ipv6_probe_arg_t *pair = (ipv6_probe_arg_t *)arg;
+	UNUSED ipv6_probe_arg_t *pair = (ipv6_probe_arg_t *)arg;
 	struct in_addr dst4 = {.s_addr = dst_ip};
 	struct in_addr spoof4 = {0};
 	make_isav_spoof_v4(dst4, &spoof4);
@@ -118,7 +124,7 @@ static int make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
 		inner_dst = make_6to4_addr(dst4, 2);
 		snprintf(payload, sizeof(payload), "PROBE_REF_%s_IID_V4#", dst4buf);
 	} else {
-		inner_src = profile.have_osav_spoof6 ? profile.osav_spoof6 : (pair ? pair->src6 : profile.scanner_inner6);
+				inner_src = profile.have_osav_spoof6 ? profile.osav_spoof6 : profile.scanner_inner6;
 		inner_dst = profile.scanner_inner6;
 		seq = htons(2);
 		snprintf(payload, sizeof(payload), "PROBE_FWD_%s#", dst4buf);
@@ -192,33 +198,31 @@ static int validate_packet(const struct ip *ip_hdr, uint32_t len, UNUSED uint32_
 	if (memcmp(&ip6->ip6_dst, &profile.scanner_inner6, sizeof(struct in6_addr)) != 0) {
 		return PACKET_INVALID;
 	}
-	const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)&ip6[1];
-	if (icmp6->icmp6_type != ICMP6_ECHO_REQUEST &&
-	    icmp6->icmp6_type != ICMP6_ECHO_REPLY) {
-		return PACKET_INVALID;
-	}
 	char payload_info[64] = {0};
-	const uint8_t *payload = (const uint8_t *)(&icmp6[1]);
-	size_t payload_len = len - sizeof(struct ip6_hdr) - sizeof(struct icmp6_hdr);
+	const uint8_t *payload = (const uint8_t *)ip6;
+	size_t payload_len = len;
 	if (!extract_probe_marker(payload, payload_len, payload_info, sizeof(payload_info))) {
 		return PACKET_INVALID;
 	}
 	return PACKET_VALID;
 }
 
+
 static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 			   UNUSED uint32_t *validation, UNUSED const struct timespec ts)
 {
 	const struct ip6_hdr *ip6 = (const struct ip6_hdr *)&packet[sizeof(struct ether_header)];
-	const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)&ip6[1];
-	const uint8_t *payload = (const uint8_t *)(&icmp6[1]);
-	size_t payload_len = len > sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)
-				 ? len - (sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr))
+	const uint8_t *payload = (const uint8_t *)ip6;
+	size_t payload_len = len > sizeof(struct ether_header)
+				 ? len - sizeof(struct ether_header)
+
 				 : 0;
 	char payload_info[64] = {0};
 	const char *marker = extract_probe_marker(payload, payload_len, payload_info,
 					      sizeof(payload_info));
 	const char *scheme = "UNKNOWN";
+	char classification[] = "tunnel-reply";
+	char empty_info[] = "";
 	if (marker && strncmp(marker, "PROBE_REF_", 10) == 0) {
 		scheme = "Reflection";
 	} else if (marker && strncmp(marker, "PROBE_FWD_", 10) == 0) {
@@ -229,7 +233,7 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 		return;
 	}
 	if (strcmp(fs->fds->fielddefs[fs->len].name, "classification") == 0) {
-		fs_add_string(fs, "classification", "tunnel-reply", 0);
+		fs_add_string(fs, "classification", classification, 0);
 	}
 	if (fs->len < fs->fds->len && strcmp(fs->fds->fielddefs[fs->len].name, "success") == 0) {
 		fs_add_uint64(fs, "success", 1);
@@ -238,19 +242,16 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 		fs_add_string(fs, "scheme_type", (char *)scheme, 0);
 	}
 	if (fs->len < fs->fds->len && strcmp(fs->fds->fielddefs[fs->len].name, "payload_info") == 0) {
-		fs_add_string(fs, "payload_info", marker ? payload_info : "", 0);
+		fs_add_string(fs, "payload_info", marker ? payload_info : empty_info, 0);
 	}
 	if (fs->len < fs->fds->len && strcmp(fs->fds->fielddefs[fs->len].name, "replied_v6_src") == 0) {
 		fs_add_string(fs, "replied_v6_src", make_ipv6_str((struct in6_addr *)&ip6->ip6_src), 1);
 	}
 }
 
-static int module_close(struct state_conf *conf, struct state_send *s,
-			struct state_recv *r)
+static int module_close(UNUSED struct state_conf *conf, UNUSED struct state_send *s,
+			UNUSED struct state_recv *r)
 {
-	UNUSED conf;
-	UNUSED s;
-	UNUSED r;
 	tunnel_sav_common_close(&profile);
 	return EXIT_SUCCESS;
 }
@@ -277,5 +278,5 @@ probe_module_t module_6to4_isav = {
 	.close = &module_close,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "6to4 isav module with dual-track probing (3 reflection IID variants + 1 forwarding) per target. Use --probes=4 and --ipv6-target-file.",
+	.helptext = "6to4 isav module with dual-track probing (3 reflection IID variants + 1 forwarding) per target. Use IPv4 target input (e.g. -w targets.txt), --probes=4, and --probe-args inner_dst6=<IPv6_prober>,spoofing-address-v6=<IPv6_other>.",
 };

@@ -452,12 +452,16 @@ int send_run(sock_t st, shard_t *s)
 			}
 			uint8_t ttl = zconf.probe_ttl;
 			size_t length = 0;
-			zconf.probe_module->make_packet(
+			int make_rc = zconf.probe_module->make_packet(
 			    batch->packets[batch->len].buf, &length,
 				src_ip, current_ip, htons(current_port), ttl, validation, i,
 				// Grab last 2 bytes of validation for ip_id
 			    (uint16_t)(validation[size_of_validation - 1] & 0xFFFF),
 			    probe_data);
+			if (make_rc != EXIT_SUCCESS || length == 0) {
+				s->state.packets_failed++;
+				continue;
+			}
 			if (length > MAX_PACKET_SIZE) {
 				log_fatal(
 				    "send",

@@ -199,10 +199,6 @@ static int validate_packet(const struct ip *ip_hdr, uint32_t len, UNUSED uint32_
 		return PACKET_INVALID;
 	}
 	const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)&ip6[1];
-	if (icmp6->icmp6_type != ICMP6_ECHO_REQUEST &&
-	    icmp6->icmp6_type != ICMP6_ECHO_REPLY) {
-		return PACKET_INVALID;
-	}
 	char payload_info[64] = {0};
 	const uint8_t *payload = (const uint8_t *)(&icmp6[1]);
 	size_t payload_len = len - sizeof(struct ip6_hdr) - sizeof(struct icmp6_hdr);
@@ -282,5 +278,5 @@ probe_module_t module_6to4_isav = {
 	.close = &module_close,
 	.fields = fields,
 	.numfields = sizeof(fields) / sizeof(fields[0]),
-	.helptext = "6to4 isav module with dual-track probing (3 reflection IID variants + 1 forwarding) per target. Use --probes=4 and --ipv6-target-file.",
+	.helptext = "6to4 isav module with dual-track probing (3 reflection IID variants + 1 forwarding) per target. Use IPv4 target input (e.g. -w targets.txt), --probes=4, and --probe-args inner_dst6=<IPv6_prober>,spoofing-address-v6=<IPv6_other>.",
 };

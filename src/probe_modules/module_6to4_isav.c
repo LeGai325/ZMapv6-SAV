@@ -198,10 +198,9 @@ static int validate_packet(const struct ip *ip_hdr, uint32_t len, UNUSED uint32_
 	if (memcmp(&ip6->ip6_dst, &profile.scanner_inner6, sizeof(struct in6_addr)) != 0) {
 		return PACKET_INVALID;
 	}
-	const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)&ip6[1];
 	char payload_info[64] = {0};
-	const uint8_t *payload = (const uint8_t *)(&icmp6[1]);
-	size_t payload_len = len - sizeof(struct ip6_hdr) - sizeof(struct icmp6_hdr);
+	const uint8_t *payload = (const uint8_t *)ip6;
+	size_t payload_len = len;
 	if (!extract_probe_marker(payload, payload_len, payload_info, sizeof(payload_info))) {
 		return PACKET_INVALID;
 	}
@@ -212,10 +211,9 @@ static void process_packet(const u_char *packet, uint32_t len, fieldset_t *fs,
 			   UNUSED uint32_t *validation, UNUSED const struct timespec ts)
 {
 	const struct ip6_hdr *ip6 = (const struct ip6_hdr *)&packet[sizeof(struct ether_header)];
-	const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)&ip6[1];
-	const uint8_t *payload = (const uint8_t *)(&icmp6[1]);
-	size_t payload_len = len > sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)
-				 ? len - (sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr))
+	const uint8_t *payload = (const uint8_t *)ip6;
+	size_t payload_len = len > sizeof(struct ether_header)
+				 ? len - sizeof(struct ether_header)
 				 : 0;
 	char payload_info[64] = {0};
 	const char *marker = extract_probe_marker(payload, payload_len, payload_info,

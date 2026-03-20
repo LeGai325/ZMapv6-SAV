@@ -96,7 +96,7 @@ static int make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
 	if (dst_ip == 0) {
 		return EXIT_FAILURE;
 	}
-	ipv6_probe_arg_t *pair = (ipv6_probe_arg_t *)arg;
+	UNUSED ipv6_probe_arg_t *pair = (ipv6_probe_arg_t *)arg;
 	struct in_addr dst4 = {.s_addr = dst_ip};
 	struct in_addr spoof4 = {0};
 	make_isav_spoof_v4(dst4, &spoof4);
@@ -124,7 +124,7 @@ static int make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
 		inner_dst = make_6to4_addr(dst4, 2);
 		snprintf(payload, sizeof(payload), "PROBE_REF_%s_IID_V4#", dst4buf);
 	} else {
-		inner_src = profile.have_osav_spoof6 ? profile.osav_spoof6 : (pair ? pair->src6 : profile.scanner_inner6);
+		inner_src = profile.have_osav_spoof6 ? profile.osav_spoof6 : profile.scanner_inner6;
 		inner_dst = profile.scanner_inner6;
 		seq = htons(2);
 		snprintf(payload, sizeof(payload), "PROBE_FWD_%s#", dst4buf);

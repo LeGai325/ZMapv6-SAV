@@ -61,6 +61,24 @@ static struct in6_addr make_6to4_addr(struct in_addr v4, int iid_mode)
 	return out;
 }
 
+static int derive_v4_from_6to4(const struct in6_addr *v6, struct in_addr *out)
+{
+	if (!v6 || !out) {
+		return 0;
+	}
+	if (v6->s6_addr[0] != 0x20 || v6->s6_addr[1] != 0x02) {
+		return 0;
+	}
+	uint8_t *b = (uint8_t *)&out->s_addr;
+	b[0] = v6->s6_addr[2];
+	b[1] = v6->s6_addr[3];
+	b[2] = v6->s6_addr[4];
+	b[3] = v6->s6_addr[5];
+	return 1;
+}
+
+
+
 static int global_initialize(struct state_conf *conf)
 {
 	int rc = tunnel_sav_common_global_initialize(&profile, &module_6to4_isav, conf);

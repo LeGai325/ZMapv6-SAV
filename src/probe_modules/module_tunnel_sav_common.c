@@ -117,6 +117,12 @@ static void close_isav_pair_table(tunnel_sav_profile_t *p)
 		pthread_mutex_destroy(&p->isav_pair_lock);
 		p->isav_pair_lock_initialized = false;
 	}
+	if (p->isav_seen_src_v4) {
+		free(p->isav_seen_src_v4);
+		p->isav_seen_src_v4 = NULL;
+	}
+	p->isav_seen_src_v4_count = 0;
+	p->isav_seen_src_v4_capacity = 0;
 }
 
 static void ensure_isav_pair_lock(tunnel_sav_profile_t *p)
@@ -202,6 +208,34 @@ static int is_known_isav_pair_v4(tunnel_sav_profile_t *p, uint32_t v4_addr)
 	int known = find_isav_pair_index(p, v4_addr) >= 0;
 	pthread_mutex_unlock(&p->isav_pair_lock);
 	return known;
+}
+
+static int is_seen_gre_ipip_isav_src_v4(const tunnel_sav_profile_t *p, uint32_t src)
+{
+	for (size_t i = 0; i < p->isav_seen_src_v4_count; i++) {
+		if (p->isav_seen_src_v4[i] == src) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int remember_gre_ipip_isav_src_v4(tunnel_sav_profile_t *p, uint32_t src)
+{
+	if (is_seen_gre_ipip_isav_src_v4(p, src)) {
+		return 0;
+	}
+	if (p->isav_seen_src_v4_count == p->isav_seen_src_v4_capacity) {
+		size_t new_cap = p->isav_seen_src_v4_capacity ? p->isav_seen_src_v4_capacity * 2 : 1024;
+		uint32_t *new_items = realloc(p->isav_seen_src_v4, new_cap * sizeof(*new_items));
+		if (!new_items) {
+			log_fatal(p->module_name, "unable to grow isav seen-source table");
+		}
+		p->isav_seen_src_v4 = new_items;
+		p->isav_seen_src_v4_capacity = new_cap;
+	}
+	p->isav_seen_src_v4[p->isav_seen_src_v4_count++] = src;
+	return 1;
 }
 
 static int payload_to_csv_pair(const uint8_t *data, size_t data_len,
@@ -914,11 +948,6 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 		    ip_hdr->ip_dst.s_addr != p->scanner_inner4.s_addr) {
 			return PACKET_INVALID;
 		}
-		const struct icmp *icmp =
-			(const struct icmp *)((const char *)ip_hdr + ip_hl_bytes);
-		if (icmp->icmp_type != ICMP_ECHO) {
-			return PACKET_INVALID;
-		}
 		if (src_ip) {
 			*src_ip = ip_hdr->ip_src.s_addr;
 		}
@@ -1133,11 +1162,6 @@ static void maybe_record_gre_ipip_isav_src(tunnel_sav_profile_t *p, const u_char
 	    ip4->ip_dst.s_addr != p->scanner_inner4.s_addr) {
 		return;
 	}
-	uint16_t ip_hl_bytes = (uint16_t)(ip4->ip_hl * 4);
-	const struct icmp *icmp = (const struct icmp *)((const uint8_t *)ip4 + ip_hl_bytes);
-	if (icmp->icmp_type != ICMP_ECHO) {
-		return;
-	}
 	p->spoof_match_count++;
 	if (!p->result_csv_fp) {
 		return;
@@ -1147,7 +1171,8 @@ static void maybe_record_gre_ipip_isav_src(tunnel_sav_profile_t *p, const u_char
 	inet_ntop(AF_INET, &src, v4buf, sizeof(v4buf));
 
 	pthread_mutex_lock(&p->result_csv_lock);
-	if (fprintf(p->result_csv_fp, "%s\n", v4buf) > 0) {
+	if (remember_gre_ipip_isav_src_v4(p, ip4->ip_src.s_addr) &&
+	    fprintf(p->result_csv_fp, "%s\n", v4buf) > 0) {
 		fflush(p->result_csv_fp);
 		p->csv_write_count++;
 		log_info(p->module_name,

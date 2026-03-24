@@ -63,6 +63,13 @@ static int use_gre_ipip_osav_minimal_payload(const tunnel_sav_profile_t *p)
 	       !p->outer_ipv6 && !p->inner_ipv6;
 }
 
+static int use_gre_ipip_isav_localdst_tracking(const tunnel_sav_profile_t *p)
+{
+	return p->mode == TUN_SAV_MODE_ISAV &&
+	       (p->proto == TUN_SAV_PROTO_GRE || p->proto == TUN_SAV_PROTO_IPIP) &&
+	       !p->outer_ipv6 && !p->inner_ipv6;
+}
+
 static uint16_t get_osav_minimal_payload_len(const tunnel_sav_profile_t *p)
 {
 	if (use_osav_pair_text_payload(p)) {
@@ -543,12 +550,22 @@ int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *p,
 		}
 		p->result_csv_lock_initialized = true;
 		if (fseek(p->result_csv_fp, 0, SEEK_END) == 0 && ftell(p->result_csv_fp) == 0) {
-			fprintf(p->result_csv_fp, "ipv4,ipv6\n");
+			if (use_gre_ipip_isav_localdst_tracking(p)) {
+				fprintf(p->result_csv_fp, "ipv4\n");
+			} else {
+				fprintf(p->result_csv_fp, "ipv4,ipv6\n");
+			}
 			fflush(p->result_csv_fp);
 		}
 	}
 
 	if (use_4in6_isav_pair_tracking(p)) {
+		char local4buf[INET_ADDRSTRLEN] = {0};
+		inet_ntop(AF_INET, &p->scanner_inner4, local4buf, sizeof(local4buf));
+		asprintf((char **)&module->pcap_filter, "icmp and dst host %s", local4buf);
+		return EXIT_SUCCESS;
+	}
+	if (use_gre_ipip_isav_localdst_tracking(p)) {
 		char local4buf[INET_ADDRSTRLEN] = {0};
 		inet_ntop(AF_INET, &p->scanner_inner4, local4buf, sizeof(local4buf));
 		asprintf((char **)&module->pcap_filter, "icmp and dst host %s", local4buf);
@@ -889,6 +906,24 @@ int tunnel_sav_common_validate_packet(tunnel_sav_profile_t *p,
 		}
 		return PACKET_VALID;
 	}
+	if (use_gre_ipip_isav_localdst_tracking(p)) {
+		uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
+		if (ip_hl_bytes < sizeof(struct ip) ||
+		    len < ip_hl_bytes + sizeof(struct icmp) ||
+		    ip_hdr->ip_p != IPPROTO_ICMP ||
+		    ip_hdr->ip_dst.s_addr != p->scanner_inner4.s_addr) {
+			return PACKET_INVALID;
+		}
+		const struct icmp *icmp =
+			(const struct icmp *)((const char *)ip_hdr + ip_hl_bytes);
+		if (icmp->icmp_type != ICMP_ECHO) {
+			return PACKET_INVALID;
+		}
+		if (src_ip) {
+			*src_ip = ip_hdr->ip_src.s_addr;
+		}
+		return PACKET_VALID;
+	}
 	if (use_osav_pair_text_payload(p)) {
 		uint16_t ip_hl_bytes = (uint16_t)(ip_hdr->ip_hl * 4);
 		if (ip_hl_bytes < sizeof(struct ip) ||
@@ -1087,6 +1122,41 @@ static void maybe_record_4in6_isav_pair(tunnel_sav_profile_t *p, const u_char *p
 	pthread_mutex_unlock(&p->result_csv_lock);
 }
 
+static void maybe_record_gre_ipip_isav_src(tunnel_sav_profile_t *p, const u_char *packet)
+{
+	if (!use_gre_ipip_isav_localdst_tracking(p)) {
+		return;
+	}
+	const struct ip *ip4 =
+		(const struct ip *)(packet + sizeof(struct ether_header));
+	if (ip4->ip_p != IPPROTO_ICMP ||
+	    ip4->ip_dst.s_addr != p->scanner_inner4.s_addr) {
+		return;
+	}
+	uint16_t ip_hl_bytes = (uint16_t)(ip4->ip_hl * 4);
+	const struct icmp *icmp = (const struct icmp *)((const uint8_t *)ip4 + ip_hl_bytes);
+	if (icmp->icmp_type != ICMP_ECHO) {
+		return;
+	}
+	p->spoof_match_count++;
+	if (!p->result_csv_fp) {
+		return;
+	}
+	char v4buf[INET_ADDRSTRLEN] = {0};
+	struct in_addr src = {.s_addr = ip4->ip_src.s_addr};
+	inet_ntop(AF_INET, &src, v4buf, sizeof(v4buf));
+
+	pthread_mutex_lock(&p->result_csv_lock);
+	if (fprintf(p->result_csv_fp, "%s\n", v4buf) > 0) {
+		fflush(p->result_csv_fp);
+		p->csv_write_count++;
+		log_info(p->module_name,
+			 "recv_count=%" PRIu64 " csv_write_count=%" PRIu64 " wrote=%s",
+			 p->spoof_match_count, p->csv_write_count, v4buf);
+	}
+	pthread_mutex_unlock(&p->result_csv_lock);
+}
+
 void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 				      const u_char *packet,
 				      uint32_t len, fieldset_t *fs,
@@ -1223,6 +1293,7 @@ void tunnel_sav_common_process_packet(tunnel_sav_profile_t *p,
 	maybe_record_csv_payload_pair(p, &csv_payload_v4, &csv_payload_v6,
 				      have_csv_pair, packet);
 	maybe_record_4in6_isav_pair(p, packet);
+	maybe_record_gre_ipip_isav_src(p, packet);
 
 	if (fs_next_is(fs, "classification")) {
 		fs_add_string(fs, "classification", (char *)cls, 0);

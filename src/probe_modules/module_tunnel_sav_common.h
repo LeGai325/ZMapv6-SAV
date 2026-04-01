@@ -46,6 +46,9 @@ typedef struct {
 	size_t isav_pair_capacity;
 	pthread_mutex_t isav_pair_lock;
 	bool isav_pair_lock_initialized;
+	uint32_t *isav_seen_src_v4;
+	size_t isav_seen_src_v4_count;
+	size_t isav_seen_src_v4_capacity;
 } tunnel_sav_profile_t;
 
 int tunnel_sav_common_global_initialize(tunnel_sav_profile_t *profile,

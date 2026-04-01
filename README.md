@@ -138,6 +138,177 @@ zmap \
 * `--gateway-mac`: optional MAC address, may be necessary if scanning node has multiple interfaces and you are using a non-default interface
 * `$gatewaymac`: MAC address of the specified interface
 
+TunnelSAV (ISAV / OSAV) Measurement Commands
+--------------------------------------------
+
+This repository also includes TunnelSAV probe modules for:
+
+* `ipip`
+* `gre`
+* `ip6ip6`
+* `gre6`
+* `4in6`
+* `6to4`
+
+Where:
+
+* **ISAV (Ingress SAV)**: filters packets entering the network with spoofed internal source addresses.
+* **OSAV (Egress SAV)**: filters packets leaving the network with spoofed/non-local source addresses.
+
+### Input files
+
+* IPv4 target list: `--list-of-ips-file <targets_v4.txt>`
+* IPv6 target list: `--ipv6-target-file <targets_v6.txt>`
+
+### Notes
+
+* Replace interface / source IP / target file paths with your local environment.
+* Use `sudo` if raw socket access requires privileges.
+* For `ipip_isav` and `gre_isav`, received IPv4 ICMP packets destined to local IPv4 are counted as matches; source IPv4s are deduplicated before writing to result CSV.
+
+### 1) `ipip_isav`
+
+```bash
+sudo zmap -M ipip_isav \
+  --interface=eno1 \
+  --list-of-ips-file=targets_v4.txt \
+  -S 101.6.20.79 \
+  --probe-args="inner_dst4=101.6.20.79" \
+  -f "saddr,daddr,classification,success,mode,proto,response_src" \
+  -o ipip_isav.csv
+```
+
+### 2) `ipip_osav`
+
+```bash
+sudo zmap -M ipip_osav \
+  --interface=eno1 \
+  --list-of-ips-file=targets_v4.txt \
+  -S 101.6.20.79 \
+  --probe-args="inner_src4=202.112.237.226,inner_dst4=101.6.20.79" \
+  -f "*" \
+  -o ipip_osav.csv
+```
+
+### 3) `gre_isav`
+
+```bash
+sudo zmap -M gre_isav \
+  --interface=eno1 \
+  --list-of-ips-file=targets_v4.txt \
+  -S 101.6.20.79 \
+  --probe-args="inner_dst4=101.6.20.79" \
+  -f "saddr,daddr,classification,success,mode,proto,response_src" \
+  -o gre_isav.csv
+```
+
+### 4) `gre_osav`
+
+```bash
+sudo zmap -M gre_osav \
+  --interface=eno1 \
+  --list-of-ips-file=targets_v4.txt \
+  -S 101.6.20.79 \
+  --probe-args="inner_src4=202.112.237.226,inner_dst4=101.6.20.79" \
+  -f "*" \
+  -o gre_osav.csv
+```
+
+### 5) `6to4_isav`
+
+```bash
+sudo zmap -M 6to4_isav \
+  --interface=eno1 \
+  --list-of-ips-file=targets_v4.txt \
+  --probe-args="inner_dst6=2402:f000:6:1401:1618:77ff:fe53:619,spoofing-address-v6=2001:da8:ff:212::10:4" \
+  -f "saddr,classification,success,scheme_type,payload_info,replied_v6_src" \
+  -o 6to4_isav.csv
+```
+
+### 6) `6to4_osav`
+
+```bash
+sudo zmap -M 6to4_osav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_src6=2001:13b0:8001:af03::116,inner_dst4=101.6.20.79,inner_src4=202.112.237.226" \
+  -f "classification,success,response_src,original_target,icmp_type,payload_outer_dst4,payload_outer_dst6,payload_inner_src4,payload_inner_dst4,payload_inner_src6,payload_inner_dst6" \
+  -o 6to4_osav.csv
+```
+
+### 7) `ip6ip6_isav`
+
+```bash
+sudo zmap -M ip6ip6_isav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_dst6=2402:f000:6:1401:1618:77ff:fe53:619" \
+  -f "saddr,daddr,classification,success,mode,proto,response_src" \
+  -o ip6ip6_isav.csv
+```
+
+### 8) `ip6ip6_osav`
+
+```bash
+sudo zmap -M ip6ip6_osav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_src6=2001:db8:ffff::9,inner_dst6=2402:f000:6:1401:1618:77ff:fe53:619" \
+  -f "*" \
+  -o ip6ip6_osav.csv
+```
+
+### 9) `gre6_isav`
+
+```bash
+sudo zmap -M gre6_isav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_dst6=2402:f000:6:1401:1618:77ff:fe53:619" \
+  -f "saddr,daddr,classification,success,mode,proto,response_src" \
+  -o gre6_isav.csv
+```
+
+### 10) `gre6_osav`
+
+```bash
+sudo zmap -M gre6_osav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_src6=2001:da8:ff:212::10:4,inner_dst6=2402:f000:6:1401:1618:77ff:fe53:619" \
+  -f "original_target,icmp_type,payload_outer_dst6,payload_inner_src6,payload_inner_dst6" \
+  -o gre6_osav.csv
+```
+
+### 11) `4in6_isav`
+
+```bash
+sudo zmap -M 4in6_isav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_dst4=101.6.20.79" \
+  -f "saddr,daddr,classification,success,mode,proto,response_src" \
+  -o 4in6_isav.csv
+```
+
+### 12) `4in6_osav`
+
+```bash
+sudo zmap -M 4in6_osav \
+  --interface=eno1 \
+  --ipv6-source-ip=2402:f000:6:1401:1618:77ff:fe53:619 \
+  --ipv6-target-file=targets_v6.txt \
+  --probe-args="inner_dst4=101.6.20.79,inner_src4=202.112.237.226" \
+  -f "saddr,classification,success,original_target,icmp_type,mode,proto,response_src,payload_outer_dst4" \
+  -o 4in6_osav.csv
+```
+
 License and Copyright
 ---------------------
 
